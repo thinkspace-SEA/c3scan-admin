@@ -1,6 +1,17 @@
 import { createClient } from '@/lib/supabase-browser'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+// Compliance Case type
+export interface ComplianceCase {
+  case_id: string
+  mailbox_id: string
+  status: 'pending' | 'under_review' | 'compliant' | 'non_compliant' | 'rejected'
+  grace_deadline?: string
+  last_reminder_at?: string
+  created_at: string
+  updated_at: string
+}
+
 // Payment Method type
 export interface PaymentMethod {
   payment_method_id: string
@@ -95,6 +106,45 @@ class BrowserApiClient {
 
   constructor() {
     this.client = createClient()
+  }
+
+  // Compliance
+  async getComplianceCases(filters?: {
+    status?: 'compliant' | 'non_compliant' | 'pending' | 'under_review' | 'rejected'
+    search?: string
+  }) {
+    let query = this.client
+      .from('compliance_cases')
+      .select('*')
+      .order('updated_at', { ascending: false })
+
+    if (filters?.status) {
+      query = query.eq('status', filters.status)
+    }
+
+    const { data, error } = await query
+    if (error) throw error
+
+    let cases = data as ComplianceCase[]
+
+    // Client-side search by mailbox_id (until we join with mailboxes table)
+    if (filters?.search) {
+      const searchLower = filters.search.toLowerCase()
+      cases = cases.filter(c =>
+        c.mailbox_id.toLowerCase().includes(searchLower)
+      )
+    }
+
+    return cases
+  }
+
+  async updateComplianceStatus(caseId: string, status: string) {
+    const { error } = await this.client
+      .from('compliance_cases')
+      .update({ status, updated_at: new Date().toISOString() })
+      .eq('case_id', caseId)
+
+    if (error) throw error
   }
 
   // Billing - Payment Methods
