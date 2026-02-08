@@ -1,11 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { supabase, type ScannedMail } from '@/lib/supabase'
+import { useEffect, useState, useCallback } from 'react'
+import { api } from '@/lib/api'
 import { StatusPill } from '@/components/ui/StatusPill'
 import { CommandPalette } from '@/components/ui/CommandPalette'
 import { UploadMailModal } from '@/components/ui/UploadMailModal'
-import { Search, Filter, Upload, Package, Mail, MoreHorizontal } from 'lucide-react'
+import { Search, Filter, Upload, Package, Mail, MoreHorizontal, Loader2, AlertCircle, RefreshCw } from 'lucide-react'
 
 // Extended type for mail items based on spec
 interface MailItem {
@@ -25,6 +25,22 @@ const packageTypeLabels: Record<string, string> = {
   package: 'Package'
 }
 
+// Transform scanned_mail data to MailItem format
+// This is a temporary mapping until the proper mail_item table is set up
+function transformScannedMail(data: unknown[]): MailItem[] {
+  return (data || []).map((item: unknown) => ({
+    mail_item_id: (item as { id: string }).id,
+    pmb: (item as { matched_company_id?: string }).matched_company_id?.substring(0, 8) || 'Unknown',
+    mailbox_name: (item as { matched_company_id?: string }).matched_company_id 
+      ? `Mailbox ${(item as { matched_company_id: string }).matched_company_id.substring(0, 4)}` 
+      : 'Unassigned',
+    package_type: (item as { scan_mode: string }).scan_mode === 'package' ? 'package' : 'correspondence',
+    status: (item as { matched_company_id?: string }).matched_company_id ? 'uploaded' : 'unassigned',
+    uploaded_at: (item as { created_at: string }).created_at,
+    photo_url: (item as { photo_url?: string }).photo_url
+  }))
+}
+
 export default function MailPage() {
   const [mailItems, setMailItems] = useState<MailItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -32,45 +48,28 @@ export default function MailPage() {
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [packageTypeFilter, setPackageTypeFilter] = useState<string>('all')
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    fetchMailItems()
-  }, [statusFilter, packageTypeFilter])
-
-  async function fetchMailItems() {
+  const fetchMailItems = useCallback(async () => {
     try {
       setLoading(true)
+      setError(null)
       
-      // For now, using scanned_mail table as the data source
-      // TODO: Migrate to proper mail_item table per spec v0.2.1
-      const query = supabase
-        .from('scanned_mail')
-        .select('*')
-        .order('created_at', { ascending: false })
-
-      const { data, error } = await query
-
-      if (error) throw error
-
-      // Transform scanned_mail data to MailItem format
-      // This is a temporary mapping until the proper mail_item table is set up
-      const transformedData: MailItem[] = (data || []).map((item: ScannedMail) => ({
-        mail_item_id: item.id,
-        pmb: item.matched_company_id?.substring(0, 8) || 'Unknown',
-        mailbox_name: item.matched_company_id ? `Mailbox ${item.matched_company_id.substring(0, 4)}` : 'Unassigned',
-        package_type: item.scan_mode === 'package' ? 'package' : 'correspondence',
-        status: item.matched_company_id ? 'uploaded' : 'unassigned',
-        uploaded_at: item.created_at,
-        photo_url: item.photo_url
-      }))
-
+      // Use API layer
+      const data = await api.getScannedMail()
+      const transformedData = transformScannedMail(data)
       setMailItems(transformedData)
-    } catch (error) {
-      console.error('Error fetching mail items:', error)
+    } catch (err) {
+      console.error('Error fetching mail items:', err)
+      setError(err instanceof Error ? err.message : 'Failed to load mail items')
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    fetchMailItems()
+  }, [fetchMailItems])
 
   // Filter mail items based on search query
   const filteredMailItems = mailItems.filter(item => {
@@ -108,6 +107,27 @@ export default function MailPage() {
         </div>
       </div>
 
+      {/* Error Banner */}
+      {error && (
+        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-3">
+          <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+          <p className="text-red-700 flex-1">{error}</p>
+          <button 
+            onClick={fetchMailItems}
+            className="flex items-center gap-1.5 text-red-600 hover:text-red-800 text-sm font-medium"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Retry
+          </button>
+          <button 
+            onClick={() => setError(null)}
+            className="text-red-600 hover:text-red-800 text-sm font-medium"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Filters */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
         <div className="flex flex-col lg:flex-row gap-4">
@@ -127,7 +147,7 @@ export default function MailPage() {
           <div className="flex items-center gap-2">
             <Filter className="w-5 h-5 text-gray-400" />
             <select
-              className="border border-gray-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-[#FFCC00] focus:border-transparent"
+              className="border border-gray-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-[#FFCC00] focus:border-transparent bg-white"
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
             >
@@ -144,7 +164,7 @@ export default function MailPage() {
           <div className="flex items-center gap-2">
             <Package className="w-5 h-5 text-gray-400" />
             <select
-              className="border border-gray-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-[#FFCC00] focus:border-transparent"
+              className="border border-gray-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-[#FFCC00] focus:border-transparent bg-white"
               value={packageTypeFilter}
               onChange={(e) => setPackageTypeFilter(e.target.value)}
             >
@@ -160,7 +180,7 @@ export default function MailPage() {
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center h-64">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#FFCC00]"></div>
+            <Loader2 className="w-8 h-8 animate-spin text-[#FFCC00]" />
           </div>
         ) : filteredMailItems.length > 0 ? (
           <div className="overflow-x-auto">

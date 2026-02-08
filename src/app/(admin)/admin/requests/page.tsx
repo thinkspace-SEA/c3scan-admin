@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
+import { api, type Request } from '@/lib/api'
 import { StatusPill } from '@/components/ui/StatusPill'
 import { CommandPalette } from '@/components/ui/CommandPalette'
 import { ForwardMailDetail } from '@/components/ui/ForwardMailDetail'
@@ -17,10 +18,13 @@ import {
   Clock,
   CheckCircle,
   List,
-  ChevronRight
+  ChevronRight,
+  Loader2,
+  AlertCircle,
+  RefreshCw
 } from 'lucide-react'
 
-// Request types from spec
+// Request types for display
 interface RequestType {
   id: string
   name: string
@@ -29,7 +33,20 @@ interface RequestType {
   color: string
 }
 
-interface Request {
+const requestTypeDefs: Omit<RequestType, 'count'>[] = [
+  { id: 'open_scan', name: 'Open & Scan', icon: <Scan className="w-5 h-5" />, color: 'bg-blue-50 text-blue-600' },
+  { id: 'shred', name: 'Shred', icon: <Trash2 className="w-5 h-5" />, color: 'bg-red-50 text-red-600' },
+  { id: 'recycle', name: 'Recycle', icon: <Recycle className="w-5 h-5" />, color: 'bg-green-50 text-green-600' },
+  { id: 'forward', name: 'Forward', icon: <Send className="w-5 h-5" />, color: 'bg-purple-50 text-purple-600' },
+  { id: 'pickup', name: 'Pickup', icon: <Package className="w-5 h-5" />, color: 'bg-orange-50 text-orange-600' },
+  { id: 'deposit', name: 'Deposit', icon: <Banknote className="w-5 h-5" />, color: 'bg-emerald-50 text-emerald-600' },
+  { id: 'weekly_forward', name: 'Weekly Forward', icon: <Calendar className="w-5 h-5" />, color: 'bg-indigo-50 text-indigo-600' },
+  { id: 'biweekly_forward', name: 'Biweekly Forward', icon: <Calendar className="w-5 h-5" />, color: 'bg-pink-50 text-pink-600' },
+  { id: 'leave_at_office', name: 'Leave at Office', icon: <Home className="w-5 h-5" />, color: 'bg-gray-50 text-gray-600' },
+]
+
+// Transform API request to display format
+interface DisplayRequest {
   request_id: string
   request_type: string
   mailbox_name: string
@@ -39,86 +56,57 @@ interface Request {
   status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
 }
 
-const requestTypes: RequestType[] = [
-  { id: 'open_scan', name: 'Open & Scan', icon: <Scan className="w-5 h-5" />, count: 0, color: 'bg-blue-50 text-blue-600' },
-  { id: 'shred', name: 'Shred', icon: <Trash2 className="w-5 h-5" />, count: 0, color: 'bg-red-50 text-red-600' },
-  { id: 'recycle', name: 'Recycle', icon: <Recycle className="w-5 h-5" />, count: 0, color: 'bg-green-50 text-green-600' },
-  { id: 'forward', name: 'Forward', icon: <Send className="w-5 h-5" />, count: 0, color: 'bg-purple-50 text-purple-600' },
-  { id: 'pickup', name: 'Pickup', icon: <Package className="w-5 h-5" />, count: 0, color: 'bg-orange-50 text-orange-600' },
-  { id: 'deposit', name: 'Deposit', icon: <Banknote className="w-5 h-5" />, count: 0, color: 'bg-emerald-50 text-emerald-600' },
-  { id: 'weekly_forward', name: 'Weekly Forward', icon: <Calendar className="w-5 h-5" />, count: 0, color: 'bg-indigo-50 text-indigo-600' },
-  { id: 'biweekly_forward', name: 'Biweekly Forward', icon: <Calendar className="w-5 h-5" />, count: 0, color: 'bg-pink-50 text-pink-600' },
-  { id: 'leave_at_office', name: 'Leave at Office', icon: <Home className="w-5 h-5" />, count: 0, color: 'bg-gray-50 text-gray-600' },
-]
-
-// Mock requests data
-const mockRequests: Request[] = [
-  {
-    request_id: 'req-001',
-    request_type: 'open_scan',
-    mailbox_name: 'Acme Corp',
-    pmb: '1001',
-    requested_by: 'john@acme.com',
-    requested_at: '2026-02-08T10:30:00Z',
-    status: 'pending'
-  },
-  {
-    request_id: 'req-002',
-    request_type: 'forward',
-    mailbox_name: 'TechStart Inc',
-    pmb: '1002',
-    requested_by: 'sarah@techstart.com',
-    requested_at: '2026-02-08T09:15:00Z',
-    status: 'in_progress'
-  },
-  {
-    request_id: 'req-003',
-    request_type: 'shred',
-    mailbox_name: 'Design Studio',
-    pmb: '1003',
-    requested_by: 'mike@design.studio',
-    requested_at: '2026-02-07T16:45:00Z',
-    status: 'pending'
-  },
-]
+function transformRequests(data: Request[]): DisplayRequest[] {
+  return data.map(item => ({
+    request_id: item.request_id,
+    request_type: item.request_type,
+    mailbox_name: `Mailbox ${item.mailbox_id.substring(0, 4)}`, // TODO: Get actual mailbox name
+    pmb: item.mailbox_id.substring(0, 4), // TODO: Get actual PMB
+    requested_by: 'customer@example.com', // TODO: Get actual user email
+    requested_at: item.requested_at,
+    status: item.request_status
+  }))
+}
 
 export default function RequestsPage() {
   const [activeTab, setActiveTab] = useState<'pending' | 'completed' | 'all'>('pending')
-  const [requestCounts, setRequestCounts] = useState<RequestType[]>(requestTypes)
-  const [requests, setRequests] = useState<Request[]>([])
+  const [requestCounts, setRequestCounts] = useState<RequestType[]>(requestTypeDefs.map(rt => ({ ...rt, count: 0 })))
+  const [requests, setRequests] = useState<DisplayRequest[]>([])
   const [loading, setLoading] = useState(true)
-  const [selectedRequest, setSelectedRequest] = useState<Request | null>(null)
+  const [selectedRequest, setSelectedRequest] = useState<DisplayRequest | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    fetchRequestData()
-  }, [activeTab])
-
-  async function fetchRequestData() {
+  const fetchRequestData = useCallback(async () => {
     try {
       setLoading(true)
+      setError(null)
       
-      // TODO: Replace with actual Supabase query
-      // Calculate counts from mock data
-      const counts = requestTypes.map(rt => ({
+      // Get requests from API
+      const statusFilter = activeTab === 'pending' ? 'pending' : activeTab === 'completed' ? 'completed' : undefined
+      const data = await api.getRequests(statusFilter)
+      
+      // Transform for display
+      const transformedRequests = transformRequests(data)
+      
+      // Calculate counts (for now, all pending since we filter on API)
+      const counts = requestTypeDefs.map(rt => ({
         ...rt,
-        count: mockRequests.filter(r => r.request_type === rt.id && r.status === 'pending').length
+        count: transformedRequests.filter(r => r.request_type === rt.id).length
       }))
       
-      // Filter requests based on active tab
-      const filteredRequests = mockRequests.filter(r => {
-        if (activeTab === 'pending') return r.status === 'pending' || r.status === 'in_progress'
-        if (activeTab === 'completed') return r.status === 'completed'
-        return true
-      })
-      
       setRequestCounts(counts)
-      setRequests(filteredRequests)
-    } catch (error) {
-      console.error('Error fetching requests:', error)
+      setRequests(transformedRequests)
+    } catch (err) {
+      console.error('Error fetching requests:', err)
+      setError(err instanceof Error ? err.message : 'Failed to load requests')
     } finally {
       setLoading(false)
     }
-  }
+  }, [activeTab])
+
+  useEffect(() => {
+    fetchRequestData()
+  }, [fetchRequestData])
 
   const totalPending = requestCounts.reduce((sum, rt) => sum + rt.count, 0)
 
@@ -133,6 +121,27 @@ export default function RequestsPage() {
           Manage customer action requests
         </p>
       </div>
+
+      {/* Error Banner */}
+      {error && (
+        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-3">
+          <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+          <p className="text-red-700 flex-1">{error}</p>
+          <button 
+            onClick={fetchRequestData}
+            className="flex items-center gap-1.5 text-red-600 hover:text-red-800 text-sm font-medium"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Retry
+          </button>
+          <button 
+            onClick={() => setError(null)}
+            className="text-red-600 hover:text-red-800 text-sm font-medium"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Request Type Cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
@@ -213,7 +222,7 @@ export default function RequestsPage() {
         {/* Requests Table */}
         {loading ? (
           <div className="flex items-center justify-center h-64">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#FFCC00]"></div>
+            <Loader2 className="w-8 h-8 animate-spin text-[#FFCC00]" />
           </div>
         ) : requests.length > 0 ? (
           <div className="overflow-x-auto">
@@ -245,7 +254,7 @@ export default function RequestsPage() {
                   <tr key={request.request_id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
-                        {requestTypes.find(rt => rt.id === request.request_type)?.icon}
+                        {requestTypeDefs.find(rt => rt.id === request.request_type)?.icon}
                         <div>
                           <p className="font-medium text-gray-900 capitalize">
                             {request.request_type.replace(/_/g, ' ')}

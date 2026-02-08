@@ -73,6 +73,22 @@ class BrowserApiClient {
     }
   }
 
+  // Get Alias Submissions with optional status filter
+  async getAliasSubmissions(status?: string) {
+    let query = this.client
+      .from('alias_submissions')
+      .select('*')
+      .order('created_at', { ascending: false })
+    
+    if (status) {
+      query = query.eq('review_status', status)
+    }
+    
+    const { data, error } = await query
+    if (error) throw error
+    return data as AliasSubmission[]
+  }
+
   // Recent Submissions
   async getRecentSubmissions(limit = 5) {
     const { data, error } = await this.client
@@ -102,6 +118,7 @@ class BrowserApiClient {
   async approveAlias(submissionId: string) {
     const { error } = await this.client.rpc('approve_alias_submission', {
       p_submission_id: submissionId,
+      p_review_notes: 'Approved via admin dashboard'
     })
     if (error) throw error
   }
@@ -109,8 +126,20 @@ class BrowserApiClient {
   async rejectAlias(submissionId: string) {
     const { error } = await this.client.rpc('reject_alias_submission', {
       p_submission_id: submissionId,
+      p_rejection_reason: 'Rejected via admin dashboard'
     })
     if (error) throw error
+  }
+
+  // Scanned Mail (temporary until mail_items table is ready)
+  async getScannedMail() {
+    const { data, error } = await this.client
+      .from('scanned_mail')
+      .select('*')
+      .order('created_at', { ascending: false })
+    
+    if (error) throw error
+    return data
   }
 
   // Mail Items

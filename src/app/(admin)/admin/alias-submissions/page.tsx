@@ -1,75 +1,63 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { supabase, type AliasSubmission } from '@/lib/supabase'
+import { useEffect, useState, useCallback } from 'react'
+import { api, type AliasSubmission } from '@/lib/api'
 import { StatusPill } from '@/components/ui/StatusPill'
 import { CommandPalette } from '@/components/ui/CommandPalette'
-import { Check, X, Search, Filter, ArrowLeft } from 'lucide-react'
+import { Check, X, Search, Filter, ArrowLeft, Loader2, AlertCircle } from 'lucide-react'
+import Link from 'next/link'
 
 export default function AliasSubmissionsPage() {
   const [submissions, setSubmissions] = useState<AliasSubmission[]>([])
   const [loading, setLoading] = useState(true)
+  const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [filter, setFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('pending')
   const [searchQuery, setSearchQuery] = useState('')
+  const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    fetchSubmissions()
-  }, [filter])
-
-  async function fetchSubmissions() {
+  const fetchSubmissions = useCallback(async () => {
     try {
       setLoading(true)
-      let query = supabase
-        .from('alias_submissions')
-        .select('*')
-        .order('created_at', { ascending: false })
-
-      if (filter !== 'all') {
-        query = query.eq('review_status', filter)
-      }
-
-      const { data, error } = await query
-
-      if (error) throw error
-      setSubmissions(data || [])
-    } catch (error) {
-      console.error('Error fetching submissions:', error)
+      setError(null)
+      
+      // Use API layer with filter support
+      const data = await api.getAliasSubmissions(filter !== 'all' ? filter : undefined)
+      setSubmissions(data)
+    } catch (err) {
+      console.error('Error fetching submissions:', err)
+      setError(err instanceof Error ? err.message : 'Failed to load submissions')
     } finally {
       setLoading(false)
     }
-  }
+  }, [filter])
+
+  useEffect(() => {
+    fetchSubmissions()
+  }, [fetchSubmissions])
 
   async function approveSubmission(submissionId: string) {
     try {
-      const { error } = await supabase
-        .rpc('approve_alias_submission', {
-          p_submission_id: submissionId,
-          p_review_notes: 'Approved via admin dashboard'
-        })
-
-      if (error) throw error
-      
-      fetchSubmissions()
-    } catch (error) {
-      console.error('Error approving submission:', error)
-      alert('Failed to approve submission')
+      setActionLoading(submissionId)
+      await api.approveAlias(submissionId)
+      await fetchSubmissions()
+    } catch (err) {
+      console.error('Error approving submission:', err)
+      setError(err instanceof Error ? err.message : 'Failed to approve submission')
+    } finally {
+      setActionLoading(null)
     }
   }
 
   async function rejectSubmission(submissionId: string) {
     try {
-      const { error } = await supabase
-        .rpc('reject_alias_submission', {
-          p_submission_id: submissionId,
-          p_rejection_reason: 'Rejected via admin dashboard'
-        })
-
-      if (error) throw error
-      
-      fetchSubmissions()
-    } catch (error) {
-      console.error('Error rejecting submission:', error)
-      alert('Failed to reject submission')
+      setActionLoading(submissionId)
+      await api.rejectAlias(submissionId)
+      await fetchSubmissions()
+    } catch (err) {
+      console.error('Error rejecting submission:', err)
+      setError(err instanceof Error ? err.message : 'Failed to reject submission')
+    } finally {
+      setActionLoading(null)
     }
   }
 
@@ -86,19 +74,33 @@ export default function AliasSubmissionsPage() {
       {/* Header */}
       <div className="mb-6">
         <div className="flex items-center gap-4 mb-2">
-          <a
+          <Link
             href="/admin"
             className="flex items-center text-gray-500 hover:text-gray-700 transition-colors"
           >
             <ArrowLeft className="w-5 h-5 mr-1" />
             Back to Dashboard
-          </a>
+          </Link>
         </div>
         <h1 className="text-2xl font-bold text-gray-900">Alias Submissions</h1>
         <p className="text-gray-500 mt-1">
           Review and approve new company aliases submitted by field staff
         </p>
       </div>
+
+      {/* Error Banner */}
+      {error && (
+        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-3">
+          <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+          <p className="text-red-700 flex-1">{error}</p>
+          <button 
+            onClick={() => setError(null)}
+            className="text-red-600 hover:text-red-800 text-sm font-medium"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 mb-6">
@@ -119,7 +121,7 @@ export default function AliasSubmissionsPage() {
           <div className="flex items-center gap-2">
             <Filter className="w-5 h-5 text-gray-400" />
             <select
-              className="border border-gray-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-[#FFCC00] focus:border-transparent"
+              className="border border-gray-200 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-[#FFCC00] focus:border-transparent bg-white"
               value={filter}
               onChange={(e) => setFilter(e.target.value as typeof filter)}
             >
@@ -136,7 +138,7 @@ export default function AliasSubmissionsPage() {
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center h-64">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#FFCC00]"></div>
+            <Loader2 className="w-8 h-8 animate-spin text-[#FFCC00]" />
           </div>
         ) : filteredSubmissions.length > 0 ? (
           <div className="overflow-x-auto">
@@ -165,7 +167,7 @@ export default function AliasSubmissionsPage() {
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {filteredSubmissions.map((submission) => (
-                  <tr key={submission.submission_id} className="hover:bg-gray-50">
+                  <tr key={submission.submission_id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-6 py-4">
                       <div className="font-medium text-gray-900">
                         {submission.proposed_alias_name}
@@ -196,14 +198,20 @@ export default function AliasSubmissionsPage() {
                         <div className="flex items-center justify-end gap-2">
                           <button
                             onClick={() => approveSubmission(submission.submission_id)}
-                            className="inline-flex items-center px-3 py-1.5 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors"
+                            disabled={actionLoading === submission.submission_id}
+                            className="inline-flex items-center px-3 py-1.5 bg-green-100 text-green-700 rounded-lg hover:bg-green-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                             title="Approve"
                           >
-                            <Check className="w-4 h-4" />
+                            {actionLoading === submission.submission_id ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              <Check className="w-4 h-4" />
+                            )}
                           </button>
                           <button
                             onClick={() => rejectSubmission(submission.submission_id)}
-                            className="inline-flex items-center px-3 py-1.5 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors"
+                            disabled={actionLoading === submission.submission_id}
+                            className="inline-flex items-center px-3 py-1.5 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                             title="Reject"
                           >
                             <X className="w-4 h-4" />
