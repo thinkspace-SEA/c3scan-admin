@@ -4,10 +4,12 @@ import { useEffect, useState, useCallback } from 'react'
 import { api, type PaymentMethod, type Invoice } from '@/lib/api'
 import { StatusPill } from '@/components/ui/StatusPill'
 import { CommandPalette } from '@/components/ui/CommandPalette'
+import { AddPaymentMethodModal } from '@/components/ui/AddPaymentMethodModal'
+import { StripeElementsWrapper, useStripeContext } from '@/providers/stripe-provider'
+import { createSetupIntent } from '@/lib/stripe-actions'
 import { 
   CreditCard, 
   Plus, 
-  MoreHorizontal, 
   Download, 
   Search, 
   Filter,
@@ -38,7 +40,9 @@ function formatCardBrand(brand: string): string {
   return cardBrands[brand]?.name || brand.charAt(0).toUpperCase() + brand.slice(1)
 }
 
-export default function BillingPage() {
+// Inner component that uses Stripe context
+function BillingContent() {
+  const { stripe, isLoading: stripeLoading } = useStripeContext()
   const [activeTab, setActiveTab] = useState<'payment_methods' | 'invoices'>('payment_methods')
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([])
   const [invoices, setInvoices] = useState<Invoice[]>([])
@@ -46,6 +50,9 @@ export default function BillingPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [error, setError] = useState<string | null>(null)
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false)
+  const [setupClientSecret, setSetupClientSecret] = useState<string | null>(null)
+  const [isCreatingIntent, setIsCreatingIntent] = useState(false)
 
   const fetchBillingData = useCallback(async () => {
     try {
@@ -74,6 +81,32 @@ export default function BillingPage() {
     fetchBillingData()
   }, [fetchBillingData])
 
+  async function handleAddPaymentMethod() {
+    try {
+      setIsCreatingIntent(true)
+      setError(null)
+
+      const { clientSecret } = await createSetupIntent()
+      setSetupClientSecret(clientSecret)
+      setIsAddModalOpen(true)
+    } catch (err) {
+      console.error('Error creating setup intent:', err)
+      setError(err instanceof Error ? err.message : 'Failed to initialize payment form')
+    } finally {
+      setIsCreatingIntent(false)
+    }
+  }
+
+  function handleModalClose() {
+    setIsAddModalOpen(false)
+    setSetupClientSecret(null)
+  }
+
+  function handleSuccess() {
+    handleModalClose()
+    fetchBillingData()
+  }
+
   async function handleDeletePaymentMethod(paymentMethodId: string) {
     if (!confirm('Are you sure you want to remove this payment method?')) return
     
@@ -93,6 +126,26 @@ export default function BillingPage() {
   const totalPaid = invoices
     .filter(i => i.status === 'paid')
     .reduce((sum, i) => sum + i.amount_cents, 0)
+
+  // Show Stripe not configured state
+  if (!stripeLoading && !stripe) {
+    return (
+      <>
+        <CommandPalette />
+        <div className="mb-6">
+          <h1 className="text-2xl font-bold text-gray-900">Billing</h1>
+          <p className="text-gray-500 mt-1">Manage payment methods and view invoices</p>
+        </div>
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-8 text-center">
+          <CreditCard className="w-12 h-12 text-yellow-600 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-yellow-800 mb-2">Stripe Not Configured</h3>
+          <p className="text-yellow-700 max-w-md mx-auto">
+            Stripe integration is not yet configured. Please add your Stripe publishable key to the environment variables.
+          </p>
+        </div>
+      </>
+    )
+  }
 
   return (
     <>
@@ -195,9 +248,17 @@ export default function BillingPage() {
         <div className="space-y-6">
           <div className="flex justify-between items-center">
             <h2 className="text-lg font-semibold text-gray-900">Saved Payment Methods</h2>
-            <button className="inline-flex items-center px-4 py-2 bg-[#0F172A] text-white rounded-lg hover:bg-gray-800 transition-colors">
-              <Plus className="w-4 h-4 mr-2" />
-              Add Payment Method
+            <button
+              onClick={handleAddPaymentMethod}
+              disabled={isCreatingIntent}
+              className="inline-flex items-center px-4 py-2 bg-[#0F172A] text-white rounded-lg hover:bg-gray-800 transition-colors disabled:opacity-50"
+            >
+              {isCreatingIntent ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Plus className="w-4 h-4 mr-2" />
+              )}
+              {isCreatingIntent ? 'Loading...' : 'Add Payment Method'}
             </button>
           </div>
 
@@ -237,7 +298,10 @@ export default function BillingPage() {
                         className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                         title="Remove"
                       >
-                        <MoreHorizontal className="w-4 h-4" />
+                        <span className="sr-only">Remove</span>
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
                       </button>
                     </div>
                   </div>
@@ -387,6 +451,29 @@ export default function BillingPage() {
           </div>
         </div>
       )}
+
+      {/* Stripe Add Payment Method Modal */}
+      {isAddModalOpen && setupClientSecret && (
+        <StripeElementsWrapper clientSecret={setupClientSecret}>
+          <AddPaymentMethodModal
+            isOpen={isAddModalOpen}
+            onClose={handleModalClose}
+            onSuccess={handleSuccess}
+            clientSecret={setupClientSecret}
+          />
+        </StripeElementsWrapper>
+      )}
     </>
   )
 }
+
+// Main page component wrapped with StripeProvider
+export default function BillingPage() {
+  return (
+    <StripeProvider>
+      <BillingContent />
+    </StripeProvider>
+  )
+}
+
+import { StripeProvider } from '@/providers/stripe-provider'
