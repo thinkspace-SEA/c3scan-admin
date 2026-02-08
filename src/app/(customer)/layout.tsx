@@ -2,8 +2,17 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { cn } from '@/lib/utils'
-import { Mail, FileText, Settings, User } from 'lucide-react'
+import { useTenant } from '@/providers/tenant-provider'
+import { 
+  Mail, 
+  ShieldCheck, 
+  Settings,
+  Bell,
+  ChevronDown,
+  LogOut
+} from 'lucide-react'
+import { useState } from 'react'
+import { useAuth } from '@/providers/auth-provider'
 
 interface NavItem {
   href: string
@@ -11,102 +20,132 @@ interface NavItem {
   label: string
 }
 
-const navItems: NavItem[] = [
-  { href: '/app', icon: <Mail className="w-5 h-5" />, label: 'My Mail' },
-  { href: '/app/requests', icon: <FileText className="w-5 h-5" />, label: 'Requests' },
-  { href: '/app/profile', icon: <User className="w-5 h-5" />, label: 'Profile' },
-  { href: '/app/settings', icon: <Settings className="w-5 h-5" />, label: 'Settings' },
-]
-
 export default function CustomerLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
   const pathname = usePathname()
+  const { selectedOperator } = useTenant()
+  const [showUserMenu, setShowUserMenu] = useState(false)
+
+  // Get mailbox ID from pathname
+  const mailboxMatch = pathname.match(/\/app\/([^/]+)/)
+  const mailboxId = mailboxMatch?.[1]
+
+  const navItems: NavItem[] = mailboxId && mailboxId !== 'select-mailbox' && !pathname.includes('invite') && !pathname.includes('register') && !pathname.includes('confirm-email')
+    ? [
+        { href: `/app/${mailboxId}/mail`, icon: <Mail className="w-5 h-5" />, label: 'Mail' },
+        { href: `/app/${mailboxId}/compliance`, icon: <ShieldCheck className="w-5 h-5" />, label: 'Compliance' },
+        { href: `/app/${mailboxId}/settings`, icon: <Settings className="w-5 h-5" />, label: 'Settings' },
+      ]
+    : []
+
+  const isAuthPage = pathname.includes('/login') || pathname.includes('/register') || pathname.includes('/invite') || pathname.includes('/confirm-email')
+
+  if (isAuthPage) {
+    return <>{children}</>
+  }
 
   return (
     <div className="min-h-screen bg-[#F7F9FC]">
-      {/* Mobile Header */}
-      <header className="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between lg:hidden">
-        <div className="w-8 h-8 bg-[#FFCC00] rounded-lg flex items-center justify-center">
-          <span className="font-bold text-black text-xs">C3</span>
-        </div>
-        <span className="font-semibold text-gray-900">C3Scan</span>
-        <div className="w-8" />{/* Spacer */}
-      </header>
-
-      <div className="flex">
-        {/* Sidebar - Desktop */}
-        <nav className="hidden lg:flex w-64 bg-white border-r border-gray-200 flex-col fixed h-full">
-          {/* Logo */}
-          <div className="p-6 border-b border-gray-200">
-            <div className="flex items-center gap-3">
+      {/* Header */}
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
+            {/* Logo */}
+            <Link href="/app" className="flex items-center gap-3">
               <div className="w-10 h-10 bg-[#FFCC00] rounded-lg flex items-center justify-center">
                 <span className="font-bold text-black text-sm">C3</span>
               </div>
-              <span className="font-bold text-gray-900">C3Scan</span>
-            </div>
-          </div>
+              <span className="font-semibold text-gray-900 hidden sm:block">
+                {selectedOperator?.operator_name || 'C3Scan'}
+              </span>
+            </Link>
 
-          {/* Navigation */}
-          <div className="flex-1 py-4 px-3">
-            <div className="space-y-1">
-              {navItems.map((item) => {
-                const isActive = pathname === item.href || pathname?.startsWith(`${item.href}/`)
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={cn(
-                      "flex items-center gap-3 px-3 py-2 rounded-lg transition-colors",
-                      isActive 
-                        ? "bg-[#FFCC00]/10 text-gray-900 font-medium" 
-                        : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
-                    )}
-                  >
-                    {item.icon}
-                    <span>{item.label}</span>
-                    {isActive && (
-                      <span className="ml-auto w-1.5 h-1.5 bg-[#FFCC00] rounded-full" />
-                    )}
-                  </Link>
-                )
-              })}
-            </div>
-          </div>
+            {/* Navigation */}
+            {navItems.length > 0 && (
+              <nav className="flex items-center gap-1">
+                {navItems.map((item) => {
+                  const isActive = pathname === item.href || pathname?.startsWith(`${item.href}/`)
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        isActive
+                          ? 'bg-yellow-50 text-gray-900'
+                          : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                      }`}
+                    >
+                      {item.icon}
+                      <span className="hidden sm:block">{item.label}</span>
+                    </Link>
+                  )
+                })}
+              </nav>
+            )}
 
-          {/* Footer */}
-          <div className="p-4 border-t border-gray-200">
-            <p className="text-xs text-gray-400">© 2026 C3Scan.io</p>
-          </div>
-        </nav>
+            {/* Right Actions */}
+            <div className="flex items-center gap-2">
+              {/* Notifications */}
+              <button className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors relative">
+                <Bell className="w-5 h-5" />
+                {/* Notification badge */}
+                <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full"></span>
+              </button>
 
-        {/* Main Content */}
-        <main className="flex-1 lg:ml-64 p-4 lg:p-6 pb-20 lg:pb-6">
-          {children}
-        </main>
+              {/* User Menu */}
+              <div className="relative">
+                <button
+                  onClick={() => setShowUserMenu(!showUserMenu)}
+                  className="flex items-center gap-2 p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center">
+                    <span className="text-sm font-medium text-gray-600">U</span>
+                  </div>
+                  <ChevronDown className="w-4 h-4 text-gray-500 hidden sm:block" />
+                </button>
 
-        {/* Mobile Bottom Nav */}
-        <nav className="lg:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 flex justify-around py-2 px-4 z-50">
-          {navItems.map((item) => {
-            const isActive = pathname === item.href || pathname?.startsWith(`${item.href}/`)
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={cn(
-                  "flex flex-col items-center gap-1 py-2 px-3 rounded-lg transition-colors",
-                  isActive ? "text-[#FFCC00]" : "text-gray-500"
+                {showUserMenu && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-40"
+                      onClick={() => setShowUserMenu(false)}
+                    />
+                    <div className="absolute right-0 top-full mt-2 w-48 bg-white rounded-xl shadow-lg border border-gray-200 z-50 overflow-hidden">
+                      <div className="py-1">
+                        <Link
+                          href="/app/profile"
+                          className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
+                          onClick={() => setShowUserMenu(false)}
+                        >
+                          Profile
+                        </Link>
+                        <button
+                          onClick={() => {
+                            setShowUserMenu(false)
+                            // TODO: Sign out
+                          }}
+                          className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center gap-2"
+                        >
+                          <LogOut className="w-4 h-4" />
+                          Sign Out
+                        </button>
+                      </div>
+                    </div>
+                  </>
                 )}
-              >
-                {item.icon}
-                <span className="text-xs">{item.label}</span>
-              </Link>
-            )
-          })}
-        </nav>
-      </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Content */}
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        {children}
+      </main>
     </div>
   )
 }
