@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { Home, Mail, ClipboardList, Users, Settings, Command } from 'lucide-react'
+import { Home, Mail, ClipboardList, FileText, Users, Settings, Command } from 'lucide-react'
 
 interface NavItem {
   href: string
@@ -14,6 +14,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { href: '/admin', icon: <Home className="w-5 h-5" />, label: 'Dashboard' },
   { href: '/admin/mail', icon: <Mail className="w-5 h-5" />, label: 'Mail' },
+  { href: '/admin/requests', icon: <FileText className="w-5 h-5" />, label: 'Requests' },
   { href: '/admin/alias-submissions', icon: <ClipboardList className="w-5 h-5" />, label: 'Aliases' },
   { href: '/admin/customers', icon: <Users className="w-5 h-5" />, label: 'Customers' },
   { href: '/admin/settings', icon: <Settings className="w-5 h-5" />, label: 'Settings' },

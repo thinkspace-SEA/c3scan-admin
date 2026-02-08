@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { Search, X, Home, Mail, ClipboardList, Users, Settings } from 'lucide-react'
+import { Search, X, Home, Mail, FileText, ClipboardList, Users, Settings } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 interface Command {
@@ -32,6 +32,13 @@ export function CommandPalette() {
       shortcut: 'M',
       icon: <Mail className="w-4 h-4" />,
       action: () => router.push('/admin/mail')
+    },
+    {
+      id: 'requests',
+      name: 'Go to Requests',
+      shortcut: 'R',
+      icon: <FileText className="w-4 h-4" />,
+      action: () => router.push('/admin/requests')
     },
     {
       id: 'aliases',
