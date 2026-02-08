@@ -1,20 +1,25 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { StatusPill } from '@/components/ui/StatusPill'
 import { 
   X, 
   ChevronLeft, 
   ChevronRight, 
   Send, 
-  Upload, 
-  FileText, 
-  Clock,
+  Package,
   User,
   MessageSquare,
+  Clock,
+  Loader2,
+  AlertCircle,
   CheckCircle,
-  Package
+  Truck,
+  DollarSign,
+  Download,
+  ExternalLink
 } from 'lucide-react'
+import { getShipmentRates, buyShipmentLabel } from '@/lib/easypost-actions'
 
 interface RequestDetailProps {
   requestId: string
@@ -42,6 +47,33 @@ const mockRequest = {
   service: 'First Class',
 }
 
+// Mock from address (operator's address)
+const mockFromAddress = {
+  name: 'Thinkspace Mailroom',
+  street1: '1201 3rd Avenue',
+  street2: 'Suite 100',
+  city: 'Seattle',
+  state: 'WA',
+  zip: '98101',
+}
+
+// Mock parcel dimensions
+const mockParcel = {
+  length: 9,
+  width: 6,
+  height: 1,
+  weight: 3, // ounces
+}
+
+interface Rate {
+  id: string
+  carrier: string
+  service: string
+  rate: string
+  delivery_days?: number
+  delivery_date?: string
+}
+
 const mockEvents = [
   { id: 1, type: 'created', user: 'sarah@techstart.com', timestamp: '2026-02-08T09:15:00Z', message: 'Request created' },
   { id: 2, type: 'viewed', user: 'admin@thinkspace.com', timestamp: '2026-02-08T10:30:00Z', message: 'Request viewed by staff' },
@@ -54,18 +86,84 @@ export function ForwardMailDetail({ requestId, onClose }: RequestDetailProps) {
   const [newNote, setNewNote] = useState('')
   const [isStaffOnly, setIsStaffOnly] = useState(true)
   const [isProcessing, setIsProcessing] = useState(false)
+  const [rates, setRates] = useState<Rate[]>([])
+  const [selectedRate, setSelectedRate] = useState<string | null>(null)
+  const [shipmentId, setShipmentId] = useState<string | null>(null)
+  const [isLoadingRates, setIsLoadingRates] = useState(false)
+  const [rateError, setRateError] = useState<string | null>(null)
+  const [labelGenerated, setLabelGenerated] = useState(false)
+  const [labelUrl, setLabelUrl] = useState<string | null>(null)
+  const [trackingNumber, setTrackingNumber] = useState<string | null>(null)
+
+  // Fetch rates when component mounts
+  useEffect(() => {
+    fetchRates()
+  }, [])
+
+  async function fetchRates() {
+    setIsLoadingRates(true)
+    setRateError(null)
+
+    try {
+      const result = await getShipmentRates({
+        toAddress: {
+          name: mockRequest.recipient_name,
+          street1: mockRequest.address_line1,
+          street2: mockRequest.address_line2,
+          city: mockRequest.city,
+          state: mockRequest.state,
+          zip: mockRequest.postal_code,
+          country: mockRequest.country,
+        },
+        fromAddress: mockFromAddress,
+        parcel: mockParcel,
+      })
+
+      setShipmentId(result.shipmentId)
+      setRates(result.rates.map((r: Rate) => ({
+        id: r.id,
+        carrier: r.carrier,
+        service: r.service,
+        rate: r.rate,
+        delivery_days: r.delivery_days,
+        delivery_date: r.delivery_date,
+      })))
+    } catch (err) {
+      console.error('Error fetching rates:', err)
+      setRateError(err instanceof Error ? err.message : 'Failed to fetch shipping rates')
+    } finally {
+      setIsLoadingRates(false)
+    }
+  }
 
   const handleForward = async () => {
+    if (!selectedRate || !shipmentId) return
+
     setIsProcessing(true)
-    // TODO: Implement forward workflow
-    // 1. Validate address
-    // 2. Create shipment via EasyPost
-    // 3. Store label as attachment
-    // 4. Update request status
-    setTimeout(() => {
+
+    try {
+      const result = await buyShipmentLabel(shipmentId, selectedRate)
+      setTrackingNumber(result.trackingNumber)
+      setLabelUrl(result.labelUrl || result.labelPdfUrl)
+      setLabelGenerated(true)
+      
+      // TODO: Save label as request attachment
+      // TODO: Update request status to 'in_progress' or 'completed'
+      // TODO: Log request_event
+    } catch (err) {
+      console.error('Error generating label:', err)
+      setRateError(err instanceof Error ? err.message : 'Failed to generate shipping label')
+    } finally {
       setIsProcessing(false)
-      onClose()
-    }, 1500)
+    }
+  }
+
+  function formatRate(rate: string): string {
+    const cents = parseInt(rate, 10)
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+    }).format(cents / 100)
   }
 
   return (
@@ -90,7 +188,7 @@ export function ForwardMailDetail({ requestId, onClose }: RequestDetailProps) {
             <div>
               <div className="flex items-center gap-3">
                 <h2 className="text-lg font-semibold text-gray-900">Forward Mail</h2>
-                <StatusPill status={mockRequest.status} />
+                <StatusPill status={labelGenerated ? 'completed' : mockRequest.status} />
               </div>
               <p className="text-sm text-gray-500">
                 Request {mockRequest.request_id} • Mail {mockRequest.mail_item_id}
@@ -143,6 +241,47 @@ export function ForwardMailDetail({ requestId, onClose }: RequestDetailProps) {
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6">
+          {rateError && (
+            <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-red-700">{rateError}</p>
+                <button 
+                  onClick={fetchRates}
+                  className="text-sm text-red-600 hover:text-red-800 mt-1 underline"
+                >
+                  Retry
+                </button>
+              </div>
+            </div>
+          )}
+
+          {labelGenerated && (
+            <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+              <div className="flex items-center gap-2 mb-2">
+                <CheckCircle className="w-5 h-5 text-green-600" />
+                <h3 className="font-medium text-green-800">Label Generated!</h3>
+              </div>
+              {trackingNumber && (
+                <p className="text-green-700 text-sm mb-3">
+                  Tracking: <span className="font-mono font-medium">{trackingNumber}</span>
+                </p>
+              )}
+              {labelUrl && (
+                <a
+                  href={labelUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors"
+                >
+                  <Download className="w-4 h-4" />
+                  Download Label
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              )}
+            </div>
+          )}
+
           {activeTab === 'details' && (
             <div className="space-y-6">
               {/* Mail Preview */}
@@ -176,27 +315,74 @@ export function ForwardMailDetail({ requestId, onClose }: RequestDetailProps) {
                 </div>
               </div>
 
-              {/* Carrier & Service */}
-              <div className="grid grid-cols-2 gap-4">
+              {/* Shipping Rates */}
+              {!labelGenerated && (
                 <div>
-                  <h3 className="text-sm font-medium text-gray-700 mb-2">Carrier</h3>
-                  <select className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FFCC00]">
-                    <option>USPS</option>
-                    <option>UPS</option>
-                    <option>FedEx</option>
-                    <option>DHL</option>
-                  </select>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-medium text-gray-700">Shipping Rates</h3>
+                    <button 
+                      onClick={fetchRates}
+                      disabled={isLoadingRates}
+                      className="text-sm text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                    >
+                      {isLoadingRates && <Loader2 className="w-3 h-3 animate-spin" />}
+                      Refresh
+                    </button>
+                  </div>
+
+                  {isLoadingRates ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="w-6 h-6 animate-spin text-[#FFCC00]" />
+                    </div>
+                  ) : rates.length > 0 ? (
+                    <div className="space-y-2">
+                      {rates.slice(0, 5).map((rate) => (
+                        <label
+                          key={rate.id}
+                          className={`flex items-center justify-between p-3 border rounded-lg cursor-pointer transition-colors ${
+                            selectedRate === rate.id
+                              ? 'border-[#FFCC00] bg-yellow-50'
+                              : 'border-gray-200 hover:bg-gray-50'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <input
+                              type="radio"
+                              name="shipping_rate"
+                              value={rate.id}
+                              checked={selectedRate === rate.id}
+                              onChange={() => setSelectedRate(rate.id)}
+                              className="w-4 h-4 text-[#FFCC00] border-gray-300 focus:ring-[#FFCC00]"
+                            />
+                            <div>
+                              <p className="font-medium text-gray-900">
+                                {rate.carrier} {rate.service}
+                              </p>
+                              {rate.delivery_days && (
+                                <p className="text-sm text-gray-500">
+                                  {rate.delivery_days} business days
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 text-gray-900 font-medium">
+                            <DollarSign className="w-4 h-4" />
+                            {formatRate(rate.rate)}
+                          </div>
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-6 bg-gray-50 rounded-lg">
+                      <Truck className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                      <p className="text-gray-500 text-sm">No rates available</p>
+                      <p className="text-xs text-gray-400 mt-1">
+                        Make sure EasyPost is configured in Settings
+                      </p>
+                    </div>
+                  )}
                 </div>
-                <div>
-                  <h3 className="text-sm font-medium text-gray-700 mb-2">Service</h3>
-                  <select className="w-full px-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FFCC00]">
-                    <option>First Class</option>
-                    <option>Priority</option>
-                    <option>Express</option>
-                    <option>Ground</option>
-                  </select>
-                </div>
-              </div>
+              )}
 
               {/* Requested By */}
               <div className="flex items-center gap-3 text-sm text-gray-600">
@@ -265,6 +451,19 @@ export function ForwardMailDetail({ requestId, onClose }: RequestDetailProps) {
 
           {activeTab === 'activity' && (
             <div className="space-y-4">
+              {labelGenerated && (
+                <div className="flex items-start gap-3">
+                  <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
+                    <CheckCircle className="w-4 h-4 text-green-600" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-gray-900">Shipping label generated</p>
+                    <p className="text-sm text-gray-500">
+                      Tracking: {trackingNumber}
+                    </p>
+                  </div>
+                </div>
+              )}
               {mockEvents.map((event) => (
                 <div key={event.id} className="flex items-start gap-3">
                   <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center flex-shrink-0">
@@ -284,26 +483,37 @@ export function ForwardMailDetail({ requestId, onClose }: RequestDetailProps) {
         </div>
 
         {/* Footer Actions */}
-        <div className="border-t border-gray-200 p-6 bg-gray-50">
-          <button
-            onClick={handleForward}
-            disabled={isProcessing}
-            className="w-full py-3 bg-[#10B981] text-white font-medium rounded-lg hover:bg-green-600 transition-colors flex items-center justify-center gap-2"
-          >
-            {isProcessing ? (
-              <>
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
-                Processing...
-              </>
-            ) : (
-              <>
-                <Send className="w-4 h-4" />
-                Forward Mail
-              </>
+        {!labelGenerated && (
+          <div className="border-t border-gray-200 p-6 bg-gray-50">
+            <button
+              onClick={handleForward}
+              disabled={isProcessing || !selectedRate || rates.length === 0}
+              className="w-full py-3 bg-[#10B981] text-white font-medium rounded-lg hover:bg-green-600 transition-colors flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isProcessing ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Generating Label...
+                </>
+              ) : (
+                <>
+                  <Send className="w-4 h-4" />
+                  {selectedRate 
+                    ? `Forward Mail (${formatRate(rates.find(r => r.id === selectedRate)?.rate || '0')})`
+                    : 'Select a Shipping Rate'
+                  }
+                </>
+              )}
+            </button>
+            {!selectedRate && rates.length > 0 && (
+              <p className="text-center text-sm text-gray-500 mt-2">
+                Select a shipping rate above to continue
+              </p>
             )}
-          </button>
-        </div>
+          </div>
+        )}
       </div>
     </div>
   )
 }
+
