@@ -43,7 +43,7 @@ export default function MailPage() {
       
       // For now, using scanned_mail table as the data source
       // TODO: Migrate to proper mail_item table per spec v0.2.1
-      let query = supabase
+      const query = supabase
         .from('scanned_mail')
         .select('*')
         .order('created_at', { ascending: false })

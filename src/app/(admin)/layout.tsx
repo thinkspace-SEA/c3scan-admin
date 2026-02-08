@@ -1,9 +1,10 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
-import { Home, Mail, ClipboardList, FileText, Users, Settings, Command } from 'lucide-react'
+import { useAuth } from '@/providers/auth-provider'
+import { Home, Mail, ClipboardList, FileText, Users, Settings, Command, LogOut } from 'lucide-react'
 
 interface NavItem {
   href: string
@@ -26,6 +27,22 @@ export default function AdminLayout({
   children: React.ReactNode
 }) {
   const pathname = usePathname()
+  const router = useRouter()
+  const { user, isLoading, signOut } = useAuth()
+
+  const handleSignOut = async () => {
+    await signOut()
+    router.push('/login')
+  }
+
+  // Show loading state while checking auth
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-[#F7F9FC] flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#FFCC00]"></div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-[#F7F9FC] flex">
@@ -69,13 +86,25 @@ export default function AdminLayout({
           })}
         </div>
 
-        {/* Command Palette Trigger */}
-        <button 
-          className="mt-auto w-10 h-10 rounded-lg flex items-center justify-center text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-colors"
-          title="Command Palette (CMD+K)"
-        >
-          <Command className="w-5 h-5" />
-        </button>
+        {/* Bottom Actions */}
+        <div className="flex flex-col gap-2">
+          {/* Command Palette Trigger */}
+          <button 
+            className="w-10 h-10 rounded-lg flex items-center justify-center text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-colors"
+            title="Command Palette (CMD+K)"
+          >
+            <Command className="w-5 h-5" />
+          </button>
+          
+          {/* Sign Out */}
+          <button 
+            onClick={handleSignOut}
+            className="w-10 h-10 rounded-lg flex items-center justify-center text-gray-500 hover:bg-red-50 hover:text-red-600 transition-colors"
+            title="Sign Out"
+          >
+            <LogOut className="w-5 h-5" />
+          </button>
+        </div>
       </nav>
 
       {/* Main Content */}

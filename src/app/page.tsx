@@ -1,6 +1,15 @@
 import Link from 'next/link'
+import { redirect } from 'next/navigation'
+import { serverApi } from '@/lib/api-server'
 
-export default function Home() {
+export default async function Home() {
+  const user = await serverApi.getCurrentUser()
+
+  // If authenticated, redirect to admin
+  if (user) {
+    redirect('/admin')
+  }
+
   return (
     <div className="min-h-screen bg-[#F7F9FC] flex flex-col items-center justify-center p-4">
       <div className="text-center max-w-md">
@@ -14,13 +23,13 @@ export default function Home() {
 
         <div className="space-y-3">
           <Link
-            href="/admin"
+            href="/login"
             className="block w-full bg-[#0F172A] text-white py-3 px-6 rounded-xl font-medium hover:bg-gray-800 transition-colors"
           >
-            Admin Dashboard
+            Admin Sign In
           </Link>
           <Link
-            href="/app"
+            href="/login"
             className="block w-full bg-white text-gray-900 border border-gray-200 py-3 px-6 rounded-xl font-medium hover:bg-gray-50 transition-colors"
           >
             Customer Portal
