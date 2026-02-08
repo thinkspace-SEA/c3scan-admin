@@ -1,6 +1,29 @@
 import { createClient } from '@/lib/supabase-browser'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
+// Operator type
+export interface Operator {
+  operator_id: string
+  operator_name: string
+  is_active: boolean
+  created_at: string
+}
+
+// Location type
+export interface Location {
+  location_id: string
+  operator_id: string
+  location_name: string
+  address_line1?: string
+  address_line2?: string
+  city?: string
+  state?: string
+  postal_code?: string
+  country?: string
+  is_active: boolean
+  created_at: string
+}
+
 // Compliance Case type
 export interface ComplianceCase {
   case_id: string
@@ -106,6 +129,51 @@ class BrowserApiClient {
 
   constructor() {
     this.client = createClient()
+  }
+
+  // Operators
+  async getUserOperators() {
+    const { data, error } = await this.client
+      .from('operator_users')
+      .select(`
+        operator_id,
+        operators!inner (
+          operator_id,
+          operator_name,
+          is_active,
+          created_at
+        )
+      `)
+      .eq('is_active', true)
+    
+    if (error) throw error
+    
+    // Transform to Operator array - operators comes as array from Supabase
+    return (data || []).map((item: { operators: Operator[] }) => item.operators?.[0]).filter(Boolean) as Operator[]
+  }
+
+  // Locations
+  async getOperatorLocations(operatorId: string) {
+    const { data, error } = await this.client
+      .from('locations')
+      .select('*')
+      .eq('operator_id', operatorId)
+      .eq('is_active', true)
+      .order('location_name', { ascending: true })
+    
+    if (error) throw error
+    return data as Location[]
+  }
+
+  async getLocationById(locationId: string) {
+    const { data, error } = await this.client
+      .from('locations')
+      .select('*')
+      .eq('location_id', locationId)
+      .single()
+    
+    if (error) throw error
+    return data as Location
   }
 
   // Compliance
