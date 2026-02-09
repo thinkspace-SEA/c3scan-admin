@@ -28,9 +28,14 @@ export async function middleware(request: NextRequest) {
   )
 
   // Refresh session if expired
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  let user = null
+  try {
+    const { data } = await supabase.auth.getUser()
+    user = data.user
+  } catch (error) {
+    // AuthSessionMissingError is expected for unauthenticated users
+    user = null
+  }
 
   // Protect admin routes
   if (request.nextUrl.pathname.startsWith('/admin') && !user) {
