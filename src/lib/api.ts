@@ -627,6 +627,159 @@ class BrowserApiClient {
     if (error && error.code !== 'PGRST116') throw error // PGRST116 = no rows
     return data
   }
+
+  // ===== CUSTOMER REQUEST API =====
+
+  // Create a new request for a mail item
+  async createRequest(params: {
+    mail_item_id: string
+    mailbox_id: string
+    request_type: 'open_scan' | 'forward' | 'shred' | 'recycle' | 'pickup' | 'deposit' | 'leave_at_office' | 'weekly_forward' | 'biweekly_forward'
+    notes?: string
+    metadata?: Record<string, unknown>
+  }) {
+    const { data: sessionData } = await this.client.auth.getSession()
+    const userId = sessionData.session?.user?.id
+    
+    if (!userId) {
+      throw new Error('Not authenticated')
+    }
+
+    // Check for existing active request on this mail item
+    const { data: existingRequests, error: checkError } = await this.client
+      .from('requests')
+      .select('request_id')
+      .eq('mail_item_id', params.mail_item_id)
+      .in('request_status', ['pending', 'in_progress'])
+      .limit(1)
+
+    if (checkError) throw checkError
+    if (existingRequests && existingRequests.length > 0) {
+      throw new Error('An active request already exists for this mail item')
+    }
+
+    // Create the request
+    const { data, error } = await this.client
+      .from('requests')
+      .insert({
+        mail_item_id: params.mail_item_id,
+        mailbox_id: params.mailbox_id,
+        request_type: params.request_type,
+        request_status: 'pending',
+        requested_by_user_id: userId,
+        requested_at: new Date().toISOString(),
+        notes: params.notes,
+        metadata_json: params.metadata,
+      })
+      .select()
+      .single()
+
+    if (error) throw error
+
+    // Update mail item status to reflect the request
+    const statusMap: Record<string, string> = {
+      'open_scan': 'open_scan_requested',
+      'forward': 'forward_requested',
+      'shred': 'shred_requested',
+      'recycle': 'recycle_requested',
+      'pickup': 'pickup_requested',
+      'deposit': 'deposit_requested',
+      'leave_at_office': 'left_at_office',
+      'weekly_forward': 'forward_requested',
+      'biweekly_forward': 'forward_requested',
+    }
+
+    const { error: updateError } = await this.client
+      .from('mail_items')
+      .update({ status: statusMap[params.request_type] })
+      .eq('mail_item_id', params.mail_item_id)
+
+    if (updateError) {
+      console.error('Failed to update mail item status:', updateError)
+      // Don't throw here - the request was created successfully
+    }
+
+    return data
+  }
+
+  // Get customer's requests
+  async getCustomerRequests(mailboxId?: string, status?: string) {
+    const { data: sessionData } = await this.client.auth.getSession()
+    const userId = sessionData.session?.user?.id
+    
+    if (!userId) {
+      throw new Error('Not authenticated')
+    }
+
+    let query = this.client
+      .from('requests')
+      .select(`
+        *,
+        mail_items (
+          mail_item_id,
+          package_type,
+          photo_url
+        )
+      `)
+      .eq('requested_by_user_id', userId)
+      .order('requested_at', { ascending: false })
+
+    if (mailboxId) {
+      query = query.eq('mailbox_id', mailboxId)
+    }
+    if (status) {
+      query = query.eq('request_status', status)
+    }
+
+    const { data, error } = await query
+    if (error) throw error
+    return data
+  }
+
+  // Cancel a pending request (customer can only cancel their own pending requests)
+  async cancelRequest(requestId: string) {
+    const { data: sessionData } = await this.client.auth.getSession()
+    const userId = sessionData.session?.user?.id
+    
+    if (!userId) {
+      throw new Error('Not authenticated')
+    }
+
+    // First verify the request belongs to the user and is pending
+    const { data: request, error: fetchError } = await this.client
+      .from('requests')
+      .select('request_status, mail_item_id')
+      .eq('request_id', requestId)
+      .eq('requested_by_user_id', userId)
+      .single()
+
+    if (fetchError) throw fetchError
+    if (!request) throw new Error('Request not found')
+    if (request.request_status !== 'pending') {
+      throw new Error('Only pending requests can be cancelled')
+    }
+
+    // Cancel the request
+    const { error } = await this.client
+      .from('requests')
+      .update({ 
+        request_status: 'cancelled',
+        completed_at: new Date().toISOString()
+      })
+      .eq('request_id', requestId)
+
+    if (error) throw error
+
+    // Revert mail item status back to uploaded
+    const { error: updateError } = await this.client
+      .from('mail_items')
+      .update({ status: 'uploaded' })
+      .eq('mail_item_id', request.mail_item_id)
+
+    if (updateError) {
+      console.error('Failed to revert mail item status:', updateError)
+    }
+  }
 }
 
 // Export singleton instance for browser

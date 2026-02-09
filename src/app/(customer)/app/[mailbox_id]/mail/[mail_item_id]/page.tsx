@@ -114,6 +114,8 @@ export default function CustomerMailDetailPage() {
   const [showRequestModal, setShowRequestModal] = useState(false)
   const [selectedRequestType, setSelectedRequestType] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [cancellingRequestId, setCancellingRequestId] = useState<string | null>(null)
+  const [successMessage, setSuccessMessage] = useState<string | null>(null)
 
   const fetchMailItem = useCallback(async () => {
     if (!mailboxId || !mailItemId) return
@@ -141,15 +143,18 @@ export default function CustomerMailDetailPage() {
     
     try {
       setSubmitting(true)
-      // TODO: Implement create request API
-      // await api.createRequest({
-      //   mail_item_id: item.mail_item_id,
-      //   mailbox_id: mailboxId,
-      //   request_type: selectedRequestType,
-      // })
+      setError(null)
+      
+      await api.createRequest({
+        mail_item_id: item.mail_item_id,
+        mailbox_id: mailboxId,
+        request_type: selectedRequestType as 'open_scan' | 'forward' | 'shred' | 'recycle' | 'pickup' | 'deposit' | 'leave_at_office',
+      })
       
       // Refresh data after request creation
       await fetchMailItem()
+      setSuccessMessage('Request submitted successfully!')
+      setTimeout(() => setSuccessMessage(null), 3000)
       setShowRequestModal(false)
       setSelectedRequestType(null)
     } catch (err) {
@@ -157,6 +162,24 @@ export default function CustomerMailDetailPage() {
       setError(err instanceof Error ? err.message : 'Failed to create request')
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  async function handleCancelRequest(requestId: string) {
+    try {
+      setCancellingRequestId(requestId)
+      setError(null)
+      
+      await api.cancelRequest(requestId)
+      
+      await fetchMailItem()
+      setSuccessMessage('Request cancelled successfully')
+      setTimeout(() => setSuccessMessage(null), 3000)
+    } catch (err) {
+      console.error('Error cancelling request:', err)
+      setError(err instanceof Error ? err.message : 'Failed to cancel request')
+    } finally {
+      setCancellingRequestId(null)
     }
   }
 
@@ -207,6 +230,14 @@ export default function CustomerMailDetailPage() {
         <ArrowLeft className="w-4 h-4" />
         Back to Inbox
       </Link>
+
+      {/* Success Message */}
+      {successMessage && (
+        <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg flex items-center gap-3">
+          <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+          <p className="text-green-700">{successMessage}</p>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left Column - Image & Details */}
@@ -298,8 +329,24 @@ export default function CustomerMailDetailPage() {
                   <Clock className="w-5 h-5 text-blue-600" />
                   <span className="font-medium text-blue-800">Action Pending</span>
                 </div>
-                <p className="text-sm text-blue-700">
-                  You have an active request for this item. We&apos;ll notify you when it&apos;s processed.
+                {item.requests?.filter(r => ['pending', 'in_progress'].includes(r.request_status)).map(req => (
+                  <div key={req.request_id} className="mb-2">
+                    <p className="text-sm text-blue-700 capitalize">
+                      {req.request_type.replace('_', ' ')} request submitted
+                    </p>
+                    {req.request_status === 'pending' && (
+                      <button
+                        onClick={() => handleCancelRequest(req.request_id)}
+                        disabled={cancellingRequestId === req.request_id}
+                        className="text-xs text-blue-600 hover:text-blue-800 font-medium mt-1 disabled:opacity-50"
+                      >
+                        {cancellingRequestId === req.request_id ? 'Cancelling...' : 'Cancel Request'}
+                      </button>
+                    )}
+                  </div>
+                ))}
+                <p className="text-sm text-blue-700 mt-2">
+                  We&apos;ll notify you when it&apos;s processed.
                 </p>
               </div>
             ) : item.status === 'uploaded' ? (
@@ -350,9 +397,27 @@ export default function CustomerMailDetailPage() {
                       </span>
                       <StatusPill status={req.request_status} />
                     </div>
-                    <p className="text-xs text-gray-500 mt-1">
-                      {new Date(req.requested_at).toLocaleDateString()}
-                    </p>
+                    <div className="flex items-center justify-between mt-2">
+                      <p className="text-xs text-gray-500">
+                        {new Date(req.requested_at).toLocaleDateString()}
+                      </p>
+                      {req.request_status === 'pending' && (
+                        <button
+                          onClick={() => handleCancelRequest(req.request_id)}
+                          disabled={cancellingRequestId === req.request_id}
+                          className="text-xs text-red-600 hover:text-red-800 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {cancellingRequestId === req.request_id ? (
+                            <span className="flex items-center gap-1">
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                              Cancelling...
+                            </span>
+                          ) : (
+                            'Cancel'
+                          )}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
