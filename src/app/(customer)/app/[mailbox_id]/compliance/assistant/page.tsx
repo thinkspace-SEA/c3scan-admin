@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import Image from 'next/image'
@@ -15,7 +15,10 @@ import {
   X,
   Loader2,
   AlertCircle,
-  Check
+  Check,
+  Plus,
+  Trash2,
+  Briefcase
 } from 'lucide-react'
 import { api } from '@/lib/api'
 
@@ -915,41 +918,303 @@ function AddressStep({
   )
 }
 
-// Step 4: Additional Information (stub)
-function AdditionalInfoStep({ 
-  onNext, 
-  onBack, 
-  mailboxId 
-}: { 
+// Step 4: Additional Information
+function AdditionalInfoStep({
+  onNext,
+  onBack,
+  mailboxId
+}: {
   onNext: () => void
   onBack: () => void
-  mailboxId: string 
+  mailboxId: string
 }) {
+  const [placeOfRegistration, setPlaceOfRegistration] = useState('')
+  const [isBusinessUse, setIsBusinessUse] = useState(false)
+  const [businessName, setBusinessName] = useState('')
+  const [renters, setRenters] = useState<Array<{ renter_id?: string; full_name: string; email: string; phone: string; isNew?: boolean }>>([])
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // New renter form state
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [newRenterName, setNewRenterName] = useState('')
+  const [newRenterEmail, setNewRenterEmail] = useState('')
+  const [newRenterPhone, setNewRenterPhone] = useState('')
+
+  // Load existing renters on mount
+  useEffect(() => {
+    const loadRenters = async () => {
+      try {
+        const existingRenters = await api.getRenters({ mailboxId })
+        setRenters(existingRenters.map(r => ({
+          renter_id: r.renter_id,
+          full_name: r.full_name,
+          email: r.email,
+          phone: r.phone || '',
+          isNew: false,
+        })))
+      } catch (err) {
+        console.error('Failed to load renters:', err)
+      }
+    }
+    loadRenters()
+  }, [mailboxId])
+
+  const handleAddRenter = async () => {
+    if (!newRenterName.trim() || !newRenterEmail.trim()) {
+      setError('Name and email are required')
+      return
+    }
+
+    setIsLoading(true)
+    setError(null)
+
+    try {
+      // Create renter in database
+      const created = await api.createRenter({
+        mailboxId,
+        fullName: newRenterName.trim(),
+        email: newRenterEmail.trim(),
+        phone: newRenterPhone.trim() || undefined,
+      })
+
+      setRenters([...renters, {
+        renter_id: created.renter_id,
+        full_name: created.full_name,
+        email: created.email,
+        phone: created.phone || '',
+        isNew: true,
+      }])
+
+      // Reset form
+      setNewRenterName('')
+      setNewRenterEmail('')
+      setNewRenterPhone('')
+      setShowAddForm(false)
+    } catch (err) {
+      console.error('Failed to create renter:', err)
+      setError(err instanceof Error ? err.message : 'Failed to add renter')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleRemoveRenter = async (index: number) => {
+    const renter = renters[index]
+    if (renter.renter_id) {
+      try {
+        await api.deleteRenter(renter.renter_id)
+      } catch (err) {
+        console.error('Failed to delete renter:', err)
+        setError('Failed to remove renter')
+        return
+      }
+    }
+    setRenters(renters.filter((_, i) => i !== index))
+  }
+
+  const canContinue = placeOfRegistration.trim() !== '' && renters.length > 0
+
   return (
     <div>
       <h2 className="text-xl font-bold text-gray-900 mb-2">Additional Information</h2>
       <p className="text-gray-500 mb-6">
         Provide business details and manage renters associated with this mailbox.
       </p>
-      
-      <div className="p-12 border-2 border-dashed border-gray-300 rounded-xl text-center">
-        <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-          <FileText className="w-8 h-8 text-gray-400" />
+
+      {error && (
+        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-red-700">{error}</p>
         </div>
-        <p className="text-gray-600 mb-2">Business details and renter management coming in next chunk</p>
-        <p className="text-sm text-gray-400">Step 4 of 6</p>
+      )}
+
+      {/* Place of Registration */}
+      <div className="mb-6">
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Place of Registration (City, State) <span className="text-red-500">*</span>
+        </label>
+        <input
+          type="text"
+          value={placeOfRegistration}
+          onChange={(e) => setPlaceOfRegistration(e.target.value)}
+          placeholder="e.g., Seattle, WA"
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FFCC00] focus:border-transparent"
+        />
+        <p className="text-xs text-gray-500 mt-1">
+          Enter the city and state where you are registered to vote or hold a driver&apos;s license.
+        </p>
       </div>
-      
+
+      {/* Business Use */}
+      <div className="mb-6 p-4 bg-gray-50 rounded-xl">
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={isBusinessUse}
+            onChange={(e) => setIsBusinessUse(e.target.checked)}
+            className="w-5 h-5 mt-0.5 rounded border-gray-300 text-[#FFCC00] focus:ring-[#FFCC00]"
+          />
+          <div>
+            <span className="font-medium text-gray-900">This mailbox is for business use</span>
+            <p className="text-sm text-gray-500">
+              Check this if you will receive business mail at this address.
+            </p>
+          </div>
+        </label>
+
+        {isBusinessUse && (
+          <div className="mt-4 pl-8">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Business Name
+            </label>
+            <div className="relative">
+              <Briefcase className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+              <input
+                type="text"
+                value={businessName}
+                onChange={(e) => setBusinessName(e.target.value)}
+                placeholder="Your Business LLC"
+                className="w-full pl-10 pr-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FFCC00] focus:border-transparent"
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Renters Section */}
+      <div className="mb-6">
+        <div className="flex items-center justify-between mb-3">
+          <label className="block text-sm font-medium text-gray-700">
+            Renters <span className="text-red-500">*</span>
+          </label>
+          <span className="text-xs text-gray-500">
+            {renters.length} renter{renters.length !== 1 ? 's' : ''}
+          </span>
+        </div>
+
+        <p className="text-sm text-gray-500 mb-3">
+          Add all individuals who will receive mail at this address. At least one renter is required.
+        </p>
+
+        {/* Renter List */}
+        {renters.length > 0 && (
+          <div className="space-y-2 mb-4">
+            {renters.map((renter, index) => (
+              <div
+                key={renter.renter_id || index}
+                className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 bg-[#FFCC00] rounded-full flex items-center justify-center">
+                    <User className="w-4 h-4 text-black" />
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-900">{renter.full_name}</p>
+                    <p className="text-sm text-gray-500">{renter.email}</p>
+                    {renter.phone && <p className="text-xs text-gray-400">{renter.phone}</p>}
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleRemoveRenter(index)}
+                  disabled={isLoading}
+                  className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                  title="Remove renter"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Add Renter Button or Form */}
+        {!showAddForm ? (
+          <button
+            onClick={() => setShowAddForm(true)}
+            className="w-full p-3 border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center gap-2 text-gray-600 hover:border-[#FFCC00] hover:text-gray-900 hover:bg-[#FFCC00]/5 transition-colors"
+          >
+            <Plus className="w-5 h-5" />
+            Add Renter
+          </button>
+        ) : (
+          <div className="p-4 border border-gray-200 rounded-lg bg-white">
+            <h4 className="font-medium text-gray-900 mb-4">Add New Renter</h4>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Full Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={newRenterName}
+                  onChange={(e) => setNewRenterName(e.target.value)}
+                  placeholder="John Doe"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FFCC00] focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Email <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="email"
+                  value={newRenterEmail}
+                  onChange={(e) => setNewRenterEmail(e.target.value)}
+                  placeholder="john@example.com"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FFCC00] focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Phone (optional)
+                </label>
+                <input
+                  type="tel"
+                  value={newRenterPhone}
+                  onChange={(e) => setNewRenterPhone(e.target.value)}
+                  placeholder="(555) 123-4567"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FFCC00] focus:border-transparent"
+                />
+              </div>
+            </div>
+            <div className="flex gap-2 mt-4">
+              <button
+                onClick={() => {
+                  setShowAddForm(false)
+                  setNewRenterName('')
+                  setNewRenterEmail('')
+                  setNewRenterPhone('')
+                  setError(null)
+                }}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAddRenter}
+                disabled={isLoading || !newRenterName.trim() || !newRenterEmail.trim()}
+                className="flex-1 px-4 py-2 bg-[#FFCC00] text-black font-medium rounded-lg hover:bg-[#E6B800] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isLoading ? 'Adding...' : 'Add Renter'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="flex justify-between mt-6">
         <button
           onClick={onBack}
-          className="px-6 py-3 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+          disabled={isLoading}
+          className="px-6 py-3 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
         >
           Back
         </button>
         <button
           onClick={onNext}
-          className="px-6 py-3 bg-[#FFCC00] text-black font-medium rounded-lg hover:bg-[#E6B800] transition-colors"
+          disabled={!canContinue || isLoading}
+          className="px-6 py-3 bg-[#FFCC00] text-black font-medium rounded-lg hover:bg-[#E6B800] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           Continue
         </button>

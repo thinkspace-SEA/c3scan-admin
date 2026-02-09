@@ -310,6 +310,60 @@ class BrowserApiClient {
     return data as Renter
   }
 
+  async createRenter(params: {
+    mailboxId: string
+    fullName: string
+    email: string
+    phone?: string
+  }) {
+    const { data, error } = await this.client
+      .from('renters')
+      .insert({
+        mailbox_id: params.mailboxId,
+        full_name: params.fullName,
+        email: params.email,
+        phone: params.phone,
+        registration_date: new Date().toISOString(),
+        is_active: true,
+      })
+      .select()
+      .single()
+
+    if (error) throw error
+    return data as Renter
+  }
+
+  async updateRenter(renterId: string, params: {
+    fullName?: string
+    email?: string
+    phone?: string
+    isActive?: boolean
+  }) {
+    const { data, error } = await this.client
+      .from('renters')
+      .update({
+        full_name: params.fullName,
+        email: params.email,
+        phone: params.phone,
+        is_active: params.isActive,
+      })
+      .eq('renter_id', renterId)
+      .select()
+      .single()
+
+    if (error) throw error
+    return data as Renter
+  }
+
+  async deleteRenter(renterId: string) {
+    const { error } = await this.client
+      .from('renters')
+      .delete()
+      .eq('renter_id', renterId)
+
+    if (error) throw error
+  }
+
   // Mailboxes
   async getMailboxes(filters?: {
     status?: 'active' | 'cancelled'
