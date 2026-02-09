@@ -971,4 +971,24 @@ class BrowserApiClient {
 }
 
 // Export singleton instance for browser
-export const api = new BrowserApiClient()
+// Lazy initialization to avoid issues during SSR
+let apiInstance: BrowserApiClient | null = null
+
+function getApi(): BrowserApiClient {
+  if (!apiInstance) {
+    apiInstance = new BrowserApiClient()
+  }
+  return apiInstance
+}
+
+// Export a proxy that lazily creates the client
+export const api: BrowserApiClient = new Proxy({} as BrowserApiClient, {
+  get(_, prop: string | symbol) {
+    const client = getApi()
+    const value = (client as any)[prop]
+    if (typeof value === 'function') {
+      return value.bind(client)
+    }
+    return value
+  }
+})
