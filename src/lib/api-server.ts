@@ -40,9 +40,13 @@ class ServerApiClient {
   // Get current user
   async getCurrentUser() {
     const client = await this.getClient()
-    const { data: { user }, error } = await client.auth.getUser()
-    if (error) throw error
-    return user
+    try {
+      const { data: { user } } = await client.auth.getUser()
+      return user
+    } catch (error) {
+      // AuthSessionMissingError is expected for unauthenticated users
+      return null
+    }
   }
 }
 
