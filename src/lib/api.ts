@@ -466,6 +466,167 @@ class BrowserApiClient {
     if (error) throw error
     return data as Request[]
   }
+
+  // ===== CUSTOMER API METHODS =====
+
+  // Get mail items for a specific mailbox (customer view)
+  async getCustomerMailItems(mailboxId: string, filters?: {
+    status?: string
+    search?: string
+  }) {
+    let query = this.client
+      .from('mail_items')
+      .select(`
+        *,
+        mailboxes!inner (
+          pmb,
+          mailbox_name
+        )
+      `)
+      .eq('mailbox_id', mailboxId)
+
+    if (filters?.status && filters.status !== 'all') {
+      query = query.eq('status', filters.status)
+    }
+
+    const { data, error } = await query.order('uploaded_at', { ascending: false })
+    if (error) throw error
+
+    // Also fetch any active requests for these mail items
+    const mailItemIds = (data || []).map((item: { mail_item_id: string }) => item.mail_item_id)
+    
+    let activeRequests: { mail_item_id: string }[] = []
+    if (mailItemIds.length > 0) {
+      const { data: requestsData, error: requestsError } = await this.client
+        .from('requests')
+        .select('mail_item_id')
+        .in('mail_item_id', mailItemIds)
+        .in('request_status', ['pending', 'in_progress'])
+      
+      if (!requestsError && requestsData) {
+        activeRequests = requestsData as { mail_item_id: string }[]
+      }
+    }
+
+    const activeRequestIds = new Set(activeRequests.map(r => r.mail_item_id))
+
+    // Transform to customer view
+    return (data || []).map((item: {
+      mail_item_id: string
+      mailbox_id: string
+      mailboxes: { pmb: string; mailbox_name: string }
+      package_type: 'correspondence' | 'package'
+      status: string
+      uploaded_at: string
+      received_at: string
+      carrier?: string
+      tracking_number?: string
+      photo_url?: string
+    }) => ({
+      mail_item_id: item.mail_item_id,
+      mailbox_id: item.mailbox_id,
+      pmb: item.mailboxes?.pmb || '',
+      mailbox_name: item.mailboxes?.mailbox_name || '',
+      package_type: item.package_type,
+      status: item.status,
+      uploaded_at: item.uploaded_at,
+      received_at: item.received_at,
+      carrier: item.carrier,
+      tracking_number: item.tracking_number,
+      photo_url: item.photo_url,
+      has_active_request: activeRequestIds.has(item.mail_item_id),
+    }))
+  }
+
+  // Get a single mail item for customer view
+  async getCustomerMailItem(mailboxId: string, mailItemId: string) {
+    const { data, error } = await this.client
+      .from('mail_items')
+      .select(`
+        *,
+        mailboxes!inner (
+          pmb,
+          mailbox_name
+        )
+      `)
+      .eq('mailbox_id', mailboxId)
+      .eq('mail_item_id', mailItemId)
+      .single()
+
+    if (error) throw error
+
+    // Get active requests for this mail item
+    const { data: requestsData } = await this.client
+      .from('requests')
+      .select('*')
+      .eq('mail_item_id', mailItemId)
+      .order('requested_at', { ascending: false })
+
+    const hasActiveRequest = (requestsData || []).some(
+      (r: { request_status: string }) => ['pending', 'in_progress'].includes(r.request_status)
+    )
+
+    return {
+      ...data,
+      has_active_request: hasActiveRequest,
+      requests: requestsData || [],
+    }
+  }
+
+  // Get customer's mailboxes (where they have membership)
+  async getCustomerMailboxes() {
+    const { data: sessionData } = await this.client.auth.getSession()
+    const userId = sessionData.session?.user?.id
+    
+    if (!userId) {
+      throw new Error('Not authenticated')
+    }
+
+    const { data, error } = await this.client
+      .from('mailbox_memberships')
+      .select(`
+        *,
+        mailboxes!inner (
+          *,
+          locations (
+            location_name
+          )
+        )
+      `)
+      .eq('user_id', userId)
+      .eq('status', 'active')
+
+    if (error) throw error
+
+    return (data || []).map((membership: {
+      mailboxes: {
+        mailbox_id: string
+        operator_id: string
+        location_id: string
+        pmb: string
+        mailbox_name: string
+        status: 'active' | 'cancelled'
+        offering_plan_id?: string
+        created_at: string
+        locations?: { location_name: string }
+      }
+    }) => ({
+      ...membership.mailboxes,
+      location_name: membership.mailboxes.locations?.location_name || '',
+    }))
+  }
+
+  // Get compliance status for a mailbox
+  async getCustomerComplianceStatus(mailboxId: string) {
+    const { data, error } = await this.client
+      .from('compliance_cases')
+      .select('*')
+      .eq('mailbox_id', mailboxId)
+      .single()
+
+    if (error && error.code !== 'PGRST116') throw error // PGRST116 = no rows
+    return data
+  }
 }
 
 // Export singleton instance for browser

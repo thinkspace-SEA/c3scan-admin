@@ -1,29 +1,36 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { useTenant } from '@/providers/tenant-provider'
-import { api, type Mailbox } from '@/lib/api'
-import { useState, useCallback } from 'react'
-import { Building2, Loader2, AlertCircle, Mail, ChevronRight } from 'lucide-react'
+import { api } from '@/lib/api'
+import { Building2, Loader2, AlertCircle, Mail, ChevronRight, MapPin } from 'lucide-react'
 import Link from 'next/link'
+
+interface CustomerMailbox {
+  mailbox_id: string
+  operator_id: string
+  location_id: string
+  pmb: string
+  mailbox_name: string
+  status: 'active' | 'cancelled'
+  offering_plan_id?: string
+  created_at: string
+  location_name?: string
+}
 
 export default function SelectMailboxPage() {
   const router = useRouter()
-  const { selectedOperator } = useTenant()
-  const [mailboxes, setMailboxes] = useState<Mailbox[]>([])
+  const [mailboxes, setMailboxes] = useState<CustomerMailbox[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const fetchMailboxes = useCallback(async () => {
-    if (!selectedOperator) return
-    
     try {
       setLoading(true)
       setError(null)
       
-      // Fetch mailboxes for this user
-      const data = await api.getMailboxes({ status: 'active' })
+      // Fetch mailboxes where user has active membership
+      const data = await api.getCustomerMailboxes()
       setMailboxes(data)
       
       // Auto-redirect if only one mailbox
@@ -36,7 +43,7 @@ export default function SelectMailboxPage() {
     } finally {
       setLoading(false)
     }
-  }, [selectedOperator, router])
+  }, [router])
 
   useEffect(() => {
     fetchMailboxes()
@@ -97,11 +104,22 @@ export default function SelectMailboxPage() {
             <div className="w-14 h-14 bg-gray-100 rounded-xl flex items-center justify-center group-hover:bg-yellow-50 transition-colors">
               <Mail className="w-7 h-7 text-gray-500 group-hover:text-[#FFCC00] transition-colors" />
             </div>
-            <div className="flex-1">
-              <h3 className="font-semibold text-gray-900 text-lg">{mailbox.mailbox_name}</h3>
-              <p className="text-gray-500">PMB {mailbox.pmb}</p>
+            <div className="flex-1 min-w-0">
+              <h3 className="font-semibold text-gray-900 text-lg truncate">{mailbox.mailbox_name}</h3>
+              <div className="flex items-center gap-2 text-gray-500">
+                <span>PMB {mailbox.pmb}</span>
+                {mailbox.location_name && (
+                  <>
+                    <span>•</span>
+                    <span className="flex items-center gap-1 truncate">
+                      <MapPin className="w-3 h-3" />
+                      {mailbox.location_name}
+                    </span>
+                  </>
+                )}
+              </div>
             </div>
-            <ChevronRight className="w-5 h-5 text-gray-400 group-hover:text-[#FFCC00] transition-colors" />
+            <ChevronRight className="w-5 h-5 text-gray-400 group-hover:text-[#FFCC00] transition-colors flex-shrink-0" />
           </Link>
         ))}
       </div>

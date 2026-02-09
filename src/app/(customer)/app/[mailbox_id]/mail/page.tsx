@@ -19,6 +19,7 @@ import Link from 'next/link'
 // Extended mail item type for customer view
 interface CustomerMailItem {
   mail_item_id: string
+  mailbox_id: string
   pmb: string
   mailbox_name: string
   package_type: 'correspondence' | 'package'
@@ -53,58 +54,51 @@ export default function CustomerInboxPage() {
   const [statusFilter, setStatusFilter] = useState('all')
   const [showArchived, setShowArchived] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [complianceStatus, setComplianceStatus] = useState<string | null>(null)
 
   const fetchMailItems = useCallback(async () => {
+    if (!mailboxId) return
+
     try {
       setLoading(true)
       setError(null)
       
-      // TODO: Replace with actual API call for customer mail items
-      // For now, simulate with scanned_mail data
-      const data = await api.getScannedMail()
+      // Fetch real mail items from Supabase
+      const data = await api.getCustomerMailItems(mailboxId, {
+        status: statusFilter,
+        search: searchQuery,
+      })
       
-      // Transform to customer view
-      const transformed: CustomerMailItem[] = (data || []).map((item: unknown) => ({
-        mail_item_id: (item as { id: string }).id,
-        pmb: '1001',
-        mailbox_name: 'My Mailbox',
-        package_type: (item as { scan_mode: string }).scan_mode === 'package' ? 'package' : 'correspondence',
-        status: 'uploaded',
-        uploaded_at: (item as { created_at: string }).created_at,
-        received_at: (item as { created_at: string }).created_at,
-        carrier: undefined,
-        tracking_number: undefined,
-        photo_url: (item as { photo_url?: string }).photo_url,
-        has_active_request: false,
-      }))
-      
-      setMailItems(transformed)
+      setMailItems(data)
+
+      // Also fetch compliance status
+      const compliance = await api.getCustomerComplianceStatus(mailboxId)
+      setComplianceStatus(compliance?.status || null)
     } catch (err) {
       console.error('Error fetching mail items:', err)
       setError(err instanceof Error ? err.message : 'Failed to load mail')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [mailboxId, statusFilter, searchQuery])
 
   useEffect(() => {
     fetchMailItems()
   }, [fetchMailItems])
 
-  // Filter mail items
+  // Filter mail items (client-side for archived)
   const filteredMailItems = mailItems.filter(item => {
-    const matchesSearch = 
+    const matchesArchived = showArchived || item.status !== 'archived'
+    const matchesSearch = searchQuery === '' || 
       item.mail_item_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.carrier?.toLowerCase().includes(searchQuery.toLowerCase()) ||
       item.tracking_number?.toLowerCase().includes(searchQuery.toLowerCase())
     
-    const matchesStatus = statusFilter === 'all' || item.status === statusFilter
-    const matchesArchived = showArchived || item.status !== 'archived'
-    
-    return matchesSearch && matchesStatus && matchesArchived
+    return matchesArchived && matchesSearch
   })
 
   const newMailCount = mailItems.filter(item => item.status === 'uploaded').length
+  const needsCompliance = complianceStatus && !['compliant'].includes(complianceStatus)
 
   return (
     <div className="space-y-6">
@@ -177,22 +171,24 @@ export default function CustomerInboxPage() {
         </div>
       </div>
 
-      {/* Compliance Banner (if needed) */}
-      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex items-start gap-3">
-        <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
-        <div className="flex-1">
-          <p className="font-medium text-yellow-800">USPS Form 1583 Required</p>
-          <p className="text-sm text-yellow-700 mt-1">
-            Please complete your compliance documentation to ensure uninterrupted service.
-          </p>
+      {/* Compliance Banner */}
+      {needsCompliance && (
+        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="font-medium text-yellow-800">USPS Form 1583 Required</p>
+            <p className="text-sm text-yellow-700 mt-1">
+              Please complete your compliance documentation to ensure uninterrupted service.
+            </p>
+          </div>
+          <Link
+            href={`/app/${mailboxId}/compliance`}
+            className="px-4 py-2 bg-[#FFCC00] text-black text-sm font-medium rounded-lg hover:bg-[#E6B800] transition-colors"
+          >
+            Complete
+          </Link>
         </div>
-        <Link
-          href={`/app/${mailboxId}/compliance`}
-          className="px-4 py-2 bg-[#FFCC00] text-black text-sm font-medium rounded-lg hover:bg-[#E6B800] transition-colors"
-        >
-          Complete
-        </Link>
-      </div>
+      )}
 
       {/* Mail Items Grid */}
       {loading ? (
