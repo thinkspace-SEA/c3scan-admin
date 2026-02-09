@@ -1444,41 +1444,282 @@ function ReviewStep({
   )
 }
 
-// Step 6: Sign (stub)
-function SignStep({ 
-  onBack, 
-  mailboxId 
-}: { 
+// Step 6: Sign
+function SignStep({
+  onBack,
+  mailboxId
+}: {
   onBack: () => void
-  mailboxId: string 
+  mailboxId: string
 }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const [isDrawing, setIsDrawing] = useState(false)
+  const [hasSignature, setHasSignature] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isSubmitted, setIsSubmitted] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const router = useRouter()
+
+  // Initialize canvas
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    // Set canvas size
+    const rect = canvas.getBoundingClientRect()
+    canvas.width = rect.width * 2 // Retina support
+    canvas.height = rect.height * 2
+    ctx.scale(2, 2)
+
+    // Set drawing style
+    ctx.strokeStyle = '#000'
+    ctx.lineWidth = 2
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+  }, [])
+
+  const getCoordinates = (e: React.MouseEvent | React.TouchEvent): { x: number; y: number } | null => {
+    const canvas = canvasRef.current
+    if (!canvas) return null
+
+    const rect = canvas.getBoundingClientRect()
+
+    if ('touches' in e) {
+      const touch = e.touches[0] || e.changedTouches[0]
+      return {
+        x: touch.clientX - rect.left,
+        y: touch.clientY - rect.top,
+      }
+    } else {
+      return {
+        x: (e as React.MouseEvent).clientX - rect.left,
+        y: (e as React.MouseEvent).clientY - rect.top,
+      }
+    }
+  }
+
+  const startDrawing = (e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault()
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const coords = getCoordinates(e)
+    if (!coords) return
+
+    ctx.beginPath()
+    ctx.moveTo(coords.x, coords.y)
+    setIsDrawing(true)
+    setHasSignature(true)
+    setError(null)
+  }
+
+  const draw = (e: React.MouseEvent | React.TouchEvent) => {
+    e.preventDefault()
+    if (!isDrawing) return
+
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    const coords = getCoordinates(e)
+    if (!coords) return
+
+    ctx.lineTo(coords.x, coords.y)
+    ctx.stroke()
+  }
+
+  const stopDrawing = () => {
+    setIsDrawing(false)
+  }
+
+  const clearSignature = () => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    setHasSignature(false)
+  }
+
+  const getSignatureSvg = (): string => {
+    const canvas = canvasRef.current
+    if (!canvas) return ''
+
+    // Convert canvas to data URL (PNG)
+    const dataUrl = canvas.toDataURL('image/png')
+
+    // Create SVG with embedded image
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${canvas.width / 2}" height="${canvas.height / 2}">
+      <image href="${dataUrl}" width="${canvas.width / 2}" height="${canvas.height / 2}" />
+    </svg>`
+
+    return svg
+  }
+
+  const handleSubmit = async () => {
+    if (!hasSignature) {
+      setError('Please sign before submitting')
+      return
+    }
+
+    setIsSubmitting(true)
+    setError(null)
+
+    try {
+      const signatureSvg = getSignatureSvg()
+
+      // Sample form data - in production this would come from wizard state
+      await api.submitComplianceCase({
+        mailboxId,
+        signatureSvg,
+        formData: {
+          idType: 'drivers_license',
+          address: {
+            line1: '123 Main Street',
+            line2: 'Apt 4B',
+            city: 'Seattle',
+            state: 'WA',
+            zip: '98101',
+          },
+          placeOfRegistration: 'Seattle, WA',
+          isBusinessUse: true,
+          businessName: 'Acme Corporation LLC',
+          renters: [
+            { name: 'John Doe', email: 'john@example.com' },
+          ],
+        },
+      })
+
+      setIsSubmitted(true)
+    } catch (err) {
+      console.error('Submit error:', err)
+      setError(err instanceof Error ? err.message : 'Failed to submit. Please try again.')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  if (isSubmitted) {
+    return (
+      <div className="text-center py-12">
+        <div className="w-20 h-20 bg-green-500 rounded-full flex items-center justify-center mx-auto mb-6">
+          <Check className="w-10 h-10 text-white" />
+        </div>
+        <h2 className="text-2xl font-bold text-gray-900 mb-4">
+          Submission Complete!
+        </h2>
+        <p className="text-gray-600 max-w-md mx-auto mb-8">
+          Your USPS Form 1583 compliance documentation has been submitted for review. 
+          You will be notified once an admin has reviewed your submission.
+        </p>
+        <div className="space-y-3">
+          <p className="text-sm text-gray-500">
+            Status: <span className="inline-flex items-center gap-1 px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full font-medium">Under Review</span>
+          </p>
+          <Link
+            href={`/app/${mailboxId}/compliance`}
+            className="inline-block px-8 py-3 bg-[#FFCC00] text-black font-semibold rounded-lg hover:bg-[#E6B800] transition-colors"
+          >
+            Return to Compliance
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div>
       <h2 className="text-xl font-bold text-gray-900 mb-2">Electronically Sign</h2>
       <p className="text-gray-500 mb-6">
-        By signing, you authorize this CMRA to receive mail on your behalf per USPS Form 1583.
+        By signing below, you authorize this Commercial Mail Receiving Agency (CMRA) 
+        to receive mail on your behalf in accordance with USPS Form 1583.
       </p>
-      
-      <div className="p-12 border-2 border-dashed border-gray-300 rounded-xl text-center">
-        <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-          <Pen className="w-8 h-8 text-gray-400" />
+
+      {error && (
+        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-start gap-3">
+          <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-red-700">{error}</p>
         </div>
-        <p className="text-gray-600 mb-2">Signature capture coming in next chunk</p>
-        <p className="text-sm text-gray-400">Step 6 of 6</p>
+      )}
+
+      {/* Signature Canvas */}
+      <div className="mb-4">
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-sm font-medium text-gray-700">
+            Your Signature <span className="text-red-500">*</span>
+          </label>
+          <button
+            onClick={clearSignature}
+            className="text-sm text-gray-500 hover:text-gray-700 font-medium"
+          >
+            Clear
+          </button>
+        </div>
+        <div className="relative border-2 border-gray-300 rounded-xl overflow-hidden bg-white">
+          <canvas
+            ref={canvasRef}
+            onMouseDown={startDrawing}
+            onMouseMove={draw}
+            onMouseUp={stopDrawing}
+            onMouseLeave={stopDrawing}
+            onTouchStart={startDrawing}
+            onTouchMove={draw}
+            onTouchEnd={stopDrawing}
+            className="w-full h-48 cursor-crosshair touch-none"
+            style={{ touchAction: 'none' }}
+          />
+          {!hasSignature && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <span className="text-gray-300 text-lg font-medium">Sign here</span>
+            </div>
+          )}
+        </div>
+        <p className="text-xs text-gray-500 mt-2">
+          Use your mouse or finger to sign above. Click Clear to start over.
+        </p>
       </div>
-      
+
+      {/* Legal Text */}
+      <div className="mb-6 p-4 bg-gray-50 rounded-lg">
+        <p className="text-sm text-gray-600">
+          I understand that this is a legal representation of my signature. By signing, 
+          I certify that all information provided is true and correct to the best of my knowledge, 
+          and I authorize this CMRA to act as my agent for receiving mail under USPS regulations.
+        </p>
+      </div>
+
       <div className="flex justify-between mt-6">
         <button
           onClick={onBack}
-          className="px-6 py-3 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+          disabled={isSubmitting}
+          className="px-6 py-3 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
         >
           Back
         </button>
         <button
-          disabled
-          className="px-6 py-3 bg-gray-300 text-gray-500 font-medium rounded-lg cursor-not-allowed"
+          onClick={handleSubmit}
+          disabled={!hasSignature || isSubmitting}
+          className="px-6 py-3 bg-[#FFCC00] text-black font-medium rounded-lg hover:bg-[#E6B800] transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
         >
-          Submit for Review
+          {isSubmitting ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Submitting...
+            </>
+          ) : (
+            'Submit for Review'
+          )}
         </button>
       </div>
     </div>

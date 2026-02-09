@@ -908,6 +908,59 @@ class BrowserApiClient {
       addressProof: null,
     }
   }
+
+  // Submit compliance case for review
+  async submitComplianceCase(params: {
+    mailboxId: string
+    signatureSvg: string
+    formData: {
+      idType: string
+      address: {
+        line1: string
+        line2?: string
+        city: string
+        state: string
+        zip: string
+      }
+      placeOfRegistration: string
+      isBusinessUse: boolean
+      businessName?: string
+      renters: Array<{ name: string; email: string; phone?: string }>
+    }
+  }) {
+    // First upload signature to storage
+    const signatureBlob = new Blob([params.signatureSvg], { type: 'image/svg+xml' })
+    const signatureFile = new File([signatureBlob], 'signature.svg', { type: 'image/svg+xml' })
+
+    const { signedUrl, filePath: signaturePath } = await this.getComplianceUploadUrl({
+      mailboxId: params.mailboxId,
+      documentType: 'address_proof', // Reusing for now, should be 'signature'
+      fileName: 'signature.svg',
+      contentType: 'image/svg+xml',
+    })
+
+    await this.uploadToSignedUrl(signedUrl, signatureFile)
+
+    // Update compliance case status to under_review
+    const { error } = await this.client
+      .from('compliance_cases')
+      .update({
+        status: 'under_review',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('mailbox_id', params.mailboxId)
+
+    if (error) throw error
+
+    // TODO: Save signature reference and form data to database when schema is ready
+    console.log('Compliance case submitted:', {
+      mailboxId: params.mailboxId,
+      signaturePath,
+      formData: params.formData,
+    })
+
+    return { success: true, signaturePath }
+  }
 }
 
 // Export singleton instance for browser
