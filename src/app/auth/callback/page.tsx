@@ -16,7 +16,8 @@ export default function AuthCallbackPage() {
         console.error('Auth callback error:', error)
         router.push('/login?error=auth_failed')
       } else {
-        router.push('/admin')
+        // Use window.location for full page reload to ensure session is picked up
+        window.location.href = '/admin'
       }
     }
 
