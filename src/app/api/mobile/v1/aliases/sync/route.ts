@@ -69,7 +69,7 @@ export async function GET(request: NextRequest) {
         effective_to,
         created_at,
         updated_at,
-        company:company_id (
+        company:company_id!inner (
           company_name,
           operator_id
         )
@@ -123,7 +123,7 @@ export async function GET(request: NextRequest) {
         mailbox_id: alias.mailbox_id,
         mailbox_pmb: mailbox?.pmb_number || null,
         location_id: mailbox?.location_id || null,
-        company_name: alias.company?.company_name,
+        company_name: Array.isArray(alias.company) ? alias.company[0]?.company_name : alias.company?.company_name,
         is_active: alias.is_active,
         updated_at: alias.updated_at
       }
