@@ -22,6 +22,7 @@ System design, security models, and technical architecture.
 - `auth-tenancy-contract.md` - Operator-scoped authentication & multi-tenancy rules
 - `mobile-api-v1.md` - iOS scanner app architecture, SQLite schema, upload flows
 - `permissions-matrix.md` - Role-based access control matrix
+- `database-erd.md` - **Complete database schema ERD** with tables, views, relationships (Mermaid diagrams)
 
 ### `/specs`
 Product specifications and design documentation.
