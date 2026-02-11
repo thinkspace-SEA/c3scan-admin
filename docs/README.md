@@ -34,6 +34,12 @@ Product specifications and design documentation.
 Implementation guides and reference materials.
 - `api-answers.md` - Detailed answers to 28 endpoint questions (from ChatGPT review)
 
+### `/integrations`
+Third-party API documentation and integration specifications.
+- `yardi-kube-api.json` - Yardi Kube Public API (Postman/OpenAPI format)
+- `yardi-kube-api-reference.md` - Full Yardi Kube API v1 reference
+- `yardi-oidc-config.png` - Yardi OIDC authentication configuration
+
 ## Key Concepts
 
 ### Operator-Scoped Tenancy
