@@ -65,7 +65,21 @@ async function handler(request: NextRequest, auth: AuthContext) {
     }
 
     // Transform to flat structure for mobile consumption
-    const transformedAliases = aliases?.map((row: any) => ({
+    const transformedAliases = aliases?.map((row: {
+      company_id?: string;
+      alias_name?: string;
+      alias_name_normalized?: string;
+      alias_type?: string;
+      mailbox?: {
+        mailbox_id?: string;
+        pmb?: string;
+        mailbox_name?: string;
+        location?: {
+          location_id?: string;
+          location_name?: string;
+        };
+      };
+    }) => ({
       company_id: row.company_id,
       alias_name: row.alias_name,
       alias_name_normalized: row.alias_name_normalized,

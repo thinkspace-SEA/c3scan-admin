@@ -67,7 +67,11 @@ async function handler(request: NextRequest) {
       )
     }
 
-    const transformedResults = results?.map((row: any) => ({
+    const transformedResults = results?.map((row: {
+      mailbox?: { mailbox_id?: string; pmb?: string };
+      alias_name?: string;
+      company?: { company_name?: string };
+    }) => ({
       mailbox_id: row.mailbox?.mailbox_id,
       mailbox_pmb: row.mailbox?.pmb,
       alias_name: row.alias_name,
