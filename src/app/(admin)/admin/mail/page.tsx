@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { api } from '@/lib/api'
+import { createClient } from '@/lib/supabase-browser'
 import { StatusPill } from '@/components/ui/StatusPill'
 import { CommandPalette } from '@/components/ui/CommandPalette'
 import { UploadMailModal } from '@/components/ui/UploadMailModal'
@@ -25,21 +26,7 @@ const packageTypeLabels: Record<string, string> = {
   package: 'Package'
 }
 
-// Transform scanned_mail data to MailItem format
-// This is a temporary mapping until the proper mail_item table is set up
-function transformScannedMail(data: unknown[]): MailItem[] {
-  return (data || []).map((item: unknown) => ({
-    mail_item_id: (item as { id: string }).id,
-    pmb: (item as { matched_company_id?: string }).matched_company_id?.substring(0, 8) || 'Unknown',
-    mailbox_name: (item as { matched_company_id?: string }).matched_company_id 
-      ? `Mailbox ${(item as { matched_company_id: string }).matched_company_id.substring(0, 4)}` 
-      : 'Unassigned',
-    package_type: (item as { scan_mode: string }).scan_mode === 'package' ? 'package' : 'correspondence',
-    status: (item as { matched_company_id?: string }).matched_company_id ? 'uploaded' : 'unassigned',
-    uploaded_at: (item as { created_at: string }).created_at,
-    photo_url: (item as { photo_url?: string }).photo_url
-  }))
-}
+const supabase = createClient()
 
 export default function MailPage() {
   const [mailItems, setMailItems] = useState<MailItem[]>([])
@@ -55,9 +42,45 @@ export default function MailPage() {
       setLoading(true)
       setError(null)
       
-      // Use API layer
-      const data = await api.getScannedMail()
-      const transformedData = transformScannedMail(data)
+      // Query mail_items table with mailbox join for real data
+      const { data, error } = await supabase
+        .from('mail_items')
+        .select(`
+          mail_item_id,
+          package_type,
+          status,
+          uploaded_at,
+          carrier,
+          tracking_number,
+          mailbox:mailbox_id (
+            pmb,
+            mailbox_name
+          )
+        `)
+        .order('uploaded_at', { ascending: false })
+      
+      if (error) throw error
+      
+      // Transform to MailItem format
+      const transformedData = (data || []).map((item: {
+        mail_item_id: string
+        package_type: 'correspondence' | 'package'
+        status: string
+        uploaded_at: string
+        carrier?: string
+        tracking_number?: string
+        mailbox?: { pmb?: string; mailbox_name?: string }
+      }) => ({
+        mail_item_id: item.mail_item_id,
+        pmb: item.mailbox?.pmb || 'Unknown',
+        mailbox_name: item.mailbox?.mailbox_name || 'Unassigned',
+        package_type: item.package_type,
+        status: item.status,
+        uploaded_at: item.uploaded_at,
+        carrier: item.carrier,
+        tracking_number: item.tracking_number,
+      }))
+      
       setMailItems(transformedData)
     } catch (err) {
       console.error('Error fetching mail items:', err)

@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useRef } from 'react'
-import { X, Upload, Camera, FileImage, ChevronDown } from 'lucide-react'
+import { useState, useRef, useEffect } from 'react'
+import { X, Upload, Camera, FileImage, ChevronDown, Loader2 } from 'lucide-react'
+import { createClient } from '@/lib/supabase-browser'
 
 interface UploadMailModalProps {
   isOpen: boolean
@@ -9,13 +10,11 @@ interface UploadMailModalProps {
   onSuccess: () => void
 }
 
-// Mock mailbox data - replace with actual Supabase query
-const mockMailboxes = [
-  { id: '1', pmb: '1001', name: 'Acme Corp' },
-  { id: '2', pmb: '1002', name: 'TechStart Inc' },
-  { id: '3', pmb: '1003', name: 'Design Studio' },
-  { id: '4', pmb: '1004', name: 'Consulting LLC' },
-]
+interface Mailbox {
+  mailbox_id: string
+  pmb: string
+  mailbox_name: string
+}
 
 const carriers = ['USPS', 'UPS', 'FedEx', 'DHL', 'Other']
 
@@ -30,17 +29,46 @@ export function UploadMailModal({ isOpen, onClose, onSuccess }: UploadMailModalP
   const [isUploading, setIsUploading] = useState(false)
   const [showMailboxDropdown, setShowMailboxDropdown] = useState(false)
   const [mailboxSearch, setMailboxSearch] = useState('')
+  const [mailboxes, setMailboxes] = useState<Mailbox[]>([])
+  const [loadingMailboxes, setLoadingMailboxes] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
   
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const supabase = createClient()
+
+  // Fetch mailboxes from Supabase
+  useEffect(() => {
+    if (!isOpen) return
+    
+    async function fetchMailboxes() {
+      setLoadingMailboxes(true)
+      try {
+        const { data, error } = await supabase
+          .from('mailbox')
+          .select('mailbox_id, pmb, mailbox_name')
+          .eq('status', 'active')
+          .order('pmb', { ascending: true })
+        
+        if (error) throw error
+        setMailboxes(data || [])
+      } catch (err) {
+        console.error('Error fetching mailboxes:', err)
+      } finally {
+        setLoadingMailboxes(false)
+      }
+    }
+    
+    fetchMailboxes()
+  }, [isOpen, supabase])
 
   if (!isOpen) return null
 
-  const filteredMailboxes = mockMailboxes.filter(mb => 
+  const filteredMailboxes = mailboxes.filter(mb => 
     mb.pmb.includes(mailboxSearch) || 
-    mb.name.toLowerCase().includes(mailboxSearch.toLowerCase())
+    mb.mailbox_name.toLowerCase().includes(mailboxSearch.toLowerCase())
   )
 
-  const selectedMailboxData = mockMailboxes.find(mb => mb.id === selectedMailbox)
+  const selectedMailboxData = mailboxes.find(mb => mb.mailbox_id === selectedMailbox)
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -59,16 +87,67 @@ export function UploadMailModal({ isOpen, onClose, onSuccess }: UploadMailModalP
     if (!selectedMailbox || images.length === 0) return
     
     setIsUploading(true)
+    setUploadError(null)
     
-    // TODO: Implement actual upload to Supabase
-    // 1. Upload images to storage
-    // 2. Create mail_item record
-    // 3. Create mail_item_image records
-    
-    setTimeout(() => {
-      setIsUploading(false)
+    try {
+      // Get current operator from session
+      const { data: { session } } = await supabase.auth.getSession()
+      const operatorId = session?.user?.user_metadata?.operator_id
+      const locationId = session?.user?.user_metadata?.location_id
+      const userEmail = session?.user?.email
+      
+      if (!operatorId) {
+        throw new Error('No operator context found')
+      }
+      
+      // 1. Get signed URL for image upload
+      const imageFile = images[0] // Handle first image
+      const { data: signedUrlData, error: signedUrlError } = await supabase
+        .storage
+        .from('mail-items')
+        .createSignedUploadUrl(`${operatorId}/${Date.now()}_${imageFile.name}`)
+      
+      if (signedUrlError) throw signedUrlError
+      
+      // 2. Upload image to Supabase Storage
+      const uploadResponse = await fetch(signedUrlData.signedUrl, {
+        method: 'PUT',
+        body: imageFile,
+        headers: { 'Content-Type': imageFile.type }
+      })
+      
+      if (!uploadResponse.ok) {
+        throw new Error('Failed to upload image')
+      }
+      
+      // 3. Create mail_item record in staging
+      const { error: insertError } = await supabase
+        .from('mail_item_staging')
+        .insert({
+          payload_json: {
+            operator_id: operatorId,
+            location_id: locationId,
+            mailbox_id: selectedMailbox,
+            scanned_by_email: userEmail,
+            envelope_image: signedUrlData.path,
+            package_type: packageType,
+            carrier: carrier || null,
+            tracking_number: trackingNumber || null,
+            scanned_at: new Date().toISOString(),
+            ocr_raw_text: null, // Admin upload - no OCR
+            ocr_confidence: null,
+          },
+          operator_id: operatorId,
+          scanned_by_email: userEmail || 'admin',
+          validation_status: 'pending',
+        })
+      
+      if (insertError) throw insertError
+      
+      // Success
       onSuccess()
       onClose()
+      
       // Reset form
       setSelectedMailbox('')
       setPackageType('correspondence')
@@ -77,7 +156,13 @@ export function UploadMailModal({ isOpen, onClose, onSuccess }: UploadMailModalP
       setReceivedDate(new Date().toISOString().split('T')[0])
       setInternalNotes('')
       setImages([])
-    }, 1500)
+      
+    } catch (err) {
+      console.error('Upload error:', err)
+      setUploadError(err instanceof Error ? err.message : 'Upload failed')
+    } finally {
+      setIsUploading(false)
+    }
   }
 
   const isValid = selectedMailbox && images.length > 0
@@ -118,7 +203,7 @@ export function UploadMailModal({ isOpen, onClose, onSuccess }: UploadMailModalP
                 >
                   <span className={selectedMailboxData ? 'text-gray-900' : 'text-gray-400'}>
                     {selectedMailboxData 
-                      ? `${selectedMailboxData.pmb} - ${selectedMailboxData.name}` 
+                      ? `${selectedMailboxData.pmb} - ${selectedMailboxData.mailbox_name}` 
                       : 'Search by PMB or mailbox name...'}
                   </span>
                   <ChevronDown className="w-4 h-4 text-gray-400" />
@@ -136,20 +221,31 @@ export function UploadMailModal({ isOpen, onClose, onSuccess }: UploadMailModalP
                         autoFocus
                       />
                     </div>
-                    {filteredMailboxes.map((mb) => (
-                      <button
-                        key={mb.id}
-                        onClick={() => {
-                          setSelectedMailbox(mb.id)
-                          setShowMailboxDropdown(false)
-                          setMailboxSearch('')
-                        }}
-                        className="w-full px-4 py-2.5 text-left hover:bg-gray-50 flex items-center gap-3"
-                      >
-                        <span className="font-medium text-gray-900">{mb.pmb}</span>
-                        <span className="text-gray-500">{mb.name}</span>
-                      </button>
-                    ))}
+                    {loadingMailboxes ? (
+                      <div className="p-4 text-center text-gray-500">
+                        <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />
+                        Loading mailboxes...
+                      </div>
+                    ) : filteredMailboxes.length === 0 ? (
+                      <div className="p-4 text-center text-gray-500">
+                        No mailboxes found
+                      </div>
+                    ) : (
+                      filteredMailboxes.map((mb) => (
+                        <button
+                          key={mb.mailbox_id}
+                          onClick={() => {
+                            setSelectedMailbox(mb.mailbox_id)
+                            setShowMailboxDropdown(false)
+                            setMailboxSearch('')
+                          }}
+                          className="w-full px-4 py-2.5 text-left hover:bg-gray-50 flex items-center gap-3"
+                        >
+                          <span className="font-medium text-gray-900">{mb.pmb}</span>
+                          <span className="text-gray-500">{mb.mailbox_name}</span>
+                        </button>
+                      ))
+                    )}
                   </div>
                 )}
               </div>
@@ -294,6 +390,13 @@ export function UploadMailModal({ isOpen, onClose, onSuccess }: UploadMailModalP
             </div>
           </div>
         </div>
+
+        {/* Error Display */}
+        {uploadError && (
+          <div className="px-6 py-3 bg-red-50 border-t border-red-200">
+            <p className="text-red-600 text-sm">{uploadError}</p>
+          </div>
+        )}
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">
