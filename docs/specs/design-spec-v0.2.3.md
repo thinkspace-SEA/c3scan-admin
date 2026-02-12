@@ -1048,30 +1048,45 @@ This feature enables the c3scan iOS app to determine a user's current coworking 
 
 ### 12.5 Mobile App Authentication Flow
 
-**App Launch Sequence:**
+**App Launch Sequence (StartupPipeline):**
 
 1. **App Start** → Database initialization → Camera initialization
 2. **Check Google OAuth Status**:
    - If NOT authenticated → Show Login screen immediately
-   - If ALREADY authenticated → Proceed to geolocation check
-3. **Geolocation Check** (runs on EVERY login/app launch if authenticated):
+   - If ALREADY authenticated → Proceed to permission check
+3. **Permission Check** (Camera & Location):
+   - **Camera**: Already requested during CameraView initialization
+   - **Location**: StartupPipeline requests `NSLocationWhenInUseUsageDescription`
+   - iOS system dialog appears on first launch: "Location access is used to automatically detect your coworking site when you log in."
+   - Pipeline waits for user response (up to 30 seconds)
+   - If denied, app continues without geolocation (user can manually select location)
+4. **Geolocation Check** (runs on EVERY login/app launch if authenticated and permitted):
    - Get current GPS coordinates
    - Call `POST /api/mobile/v1/geofence/detect`
    - Auto-select closest location within radius
    - Show location picker if multiple locations found
-4. **Main Camera Screen** appears (ready for scanning)
+5. **Cache Sync**: Sync company aliases for offline matching
+6. **Main Camera Screen** appears (ready for scanning)
+
+**StartupPipeline Features:**
+- **Guaranteed execution**: All critical tasks run in sequence
+- **Permission handling**: Gracefully handles camera/location permission dialogs
+- **Error resilience**: Continues even if geolocation or cache sync fails
+- **Progress tracking**: UI can show startup progress
+- **Re-runnable**: Can be reset and re-run after logout
 
 **Logout Flow:**
 1. User taps **Log Out** in Settings
 2. Auth token is cleared immediately
 3. **Login screen appears automatically** (no manual steps)
 4. User must sign in with Google to continue
-5. After successful login → Geolocation check runs → Location updated
+5. After successful login → **StartupPipeline runs again** → Location updated
 
 **Key Principles:**
 - **No "remember me" that bypasses login** - User must authenticate every session
-- **Geolocation on every login** - Location is always checked after authentication
+- **Geolocation on every login** - Location is always checked after authentication (if permitted)
 - **Forced re-authentication** - Logout immediately triggers login screen
+- **Permission-first**: System permissions requested at appropriate times
 
 ### 12.6 Mobile App Settings
 
