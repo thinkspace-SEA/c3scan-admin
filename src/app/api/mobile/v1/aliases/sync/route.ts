@@ -137,7 +137,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       aliases: formattedAliases,
       sync_timestamp: Math.floor(Date.now() / 1000),
-      count: formattedAliases.length
+      total_count: formattedAliases.length
     })
 
   } catch (error) {
