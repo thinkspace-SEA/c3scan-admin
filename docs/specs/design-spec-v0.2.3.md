@@ -1046,18 +1046,33 @@ This feature enables the c3scan iOS app to determine a user's current coworking 
 - `is_active` (boolean)
 - `created_at`, `updated_at` (timestamps)
 
-### 12.5 Mobile App Settings
+### 12.5 Mobile App Launch Flow
+
+**App Launch Sequence:**
+
+1. **App Start** → Database initialization → Camera initialization
+2. **Check Google OAuth Status**:
+   - If NOT authenticated → Show Login screen
+   - If ALREADY authenticated → Proceed to geolocation check
+3. **Geolocation Check** (runs on every launch if authenticated):
+   - Get current GPS coordinates
+   - Call `POST /api/mobile/v1/geofence/detect`
+   - Auto-select closest location within radius
+   - Show location picker if multiple locations found
+4. **Main Camera Screen** appears (ready for scanning)
+
+### 12.6 Mobile App Settings
 
 **Settings Screen Layout (Top to Bottom)**:
 
 1. **Account Information Section** (Top of screen, always visible when authenticated)
-   - Operator Name (with building icon)
-   - Employee Email Address (with envelope icon)
-   - Current Location Name (with map pin icon)
-   - Log Out button (red, centered)
+   - **Operator Name** (with building.2 icon, blue)
+   - **Employee Email** (with envelope icon, green) 
+   - **Current Location** (with mappin.and.ellipse icon, orange)
+   - **Log Out** button (red, centered) - logs out and returns to login
    - *Purpose: Always-visible context for which operator/location the employee is working under*
 
-2. **Location Settings Section**
+2. **Location Settings Section** (only when authenticated)
    - Location picker (if multiple locations available)
    - Current location display (if single location)
    - Loading indicator during location fetch
@@ -1077,13 +1092,19 @@ This feature enables the c3scan iOS app to determine a user's current coworking 
    - App Version
    - Build Number
 
+**Settings Screen Flow:**
+- User opens Settings
+- If authenticated: Shows Operator, Email, Location, Logout button
+- If NOT authenticated: Shows "Not Signed In" prompt with Sign In button
+- Tapping Logout clears auth token and shows login screen
+
 **Security Context Display**:
 The Account Information section at the top serves as a persistent security indicator, ensuring the employee always knows:
 - Which operator they are representing
 - Which email account they're logged in as
 - Which location their scans will be assigned to
 
-### 12.6 Expected Outcome
+### 12.7 Expected Outcome
 
 When a user logs in, the app will accurately set the session for the correct operator and location, with the flexibility of adjusting the geofence radius to suit different scenarios. This ensures that even during testing or special cases, the correct location context is applied.
 

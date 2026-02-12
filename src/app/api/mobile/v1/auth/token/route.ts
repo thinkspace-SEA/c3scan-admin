@@ -152,6 +152,7 @@ export async function POST(request: NextRequest) {
       access_token: accessToken,
       token_type: 'Bearer',
       expires_in: 30 * 24 * 60 * 60, // 30 days in seconds
+      email: userData.email,
       user: {
         user_id: userData.user_id,
         email: userData.email,
