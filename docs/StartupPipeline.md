@@ -254,7 +254,7 @@ Potential improvements:
 
 ## Related Files
 
-- `GoPostal/Managers/StartupPipeline.swift` - Main implementation
+- `GoPostal/StartupPipeline.swift` - Main implementation
 - `GoPostal/Services/LocationService.swift` - Geolocation logic
 - `GoPostal/Services/MobileAPIClient.swift` - API client
 - `GoPostal/Services/SyncManager.swift` - Cache synchronization
