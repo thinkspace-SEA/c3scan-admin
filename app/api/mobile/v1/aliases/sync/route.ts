@@ -95,26 +95,9 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Get mailbox details for PMB numbers
-    const mailboxIds = aliases
-      ?.map(a => a.mailbox_id)
-      .filter(Boolean)
-      .filter((v, i, a) => a.indexOf(v) === i) // unique
-
-    let mailboxes: any[] = []
-    if (mailboxIds.length > 0) {
-      const { data: mailboxData } = await supabase
-        .from('mailbox')
-        .select('mailbox_id, pmb_number, location_id')
-        .in('mailbox_id', mailboxIds)
-        .eq('is_active', true)
-      
-      mailboxes = mailboxData || []
-    }
-
     // Format response for iOS app
+    // mailbox_id is already normalized in company_alias table
     const formattedAliases = aliases?.map(alias => {
-      const mailbox = mailboxes.find(m => m.mailbox_id === alias.mailbox_id)
       // Handle company as either array or object from Supabase
       const companyData = alias.company as { company_name?: string } | Array<{ company_name?: string }> | null
       const companyName = Array.isArray(companyData)
@@ -126,8 +109,8 @@ export async function GET(request: NextRequest) {
         alias_name_normalized: alias.alias_name_normalized,
         alias_type: alias.alias_type,
         mailbox_id: alias.mailbox_id || "",
-        mailbox_pmb: mailbox?.pmb_number || "",
-        location_id: mailbox?.location_id || "",
+        mailbox_pmb: alias.mailbox_id || "",  // Use mailbox_id directly (already normalized)
+        location_id: "",  // Legacy field, may be empty
         company_name: companyName || alias.alias_name || "",
         is_active: alias.is_active,
         updated_at: alias.updated_at
