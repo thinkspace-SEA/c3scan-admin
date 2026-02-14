@@ -17,6 +17,10 @@ function verifyToken(token: string): { user_id: string; operator_id: string; ema
 
 // POST /api/mobile/v1/mail
 // Create a mail item in staging table (no constraints) for post-processing
+// 
+// SECURITY: Follows c3scan Tenancy Isolation Contract
+// Compound Key: operator_id + location_id + mailbox_id (all required for uniqueness)
+// Reference: docs/architecture/auth-tenancy-contract.md
 export async function POST(request: NextRequest) {
   try {
     // Get auth token from header
@@ -42,20 +46,22 @@ export async function POST(request: NextRequest) {
     const {
       operator_id,
       location_id,
-      mailbox_id,        // This is the PMB string (e.g., "1614")
-      mailbox_pmb,       // Alternative field name
+      mailbox_id,        // STRING (e.g., "1614", "Suite 200")
       scanned_by_email,
       envelope_image,
       ocr_raw_text,
       ocr_confidence,
+      match_confidence,  // From matching service
+      match_method,      // 'fuzzy_ocr', 'manual_search', etc.
       package_type,
       carrier,
       tracking_number,
       scanned_at,
       image_hash,
       client_scan_id,
-      company_id,        // Company identifier
-      company_name       // Company name for reference
+      company_id,        // UUID - resolved company
+      company_name,      // Human-readable company name
+      app_version
     } = body
 
     // Validate required fields
@@ -66,43 +72,56 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Validate operator_id matches token
+    // Validate operator_id matches token (Tenancy Isolation)
     if (operator_id !== tokenData.operator_id) {
       return NextResponse.json(
-        { error: 'Operator mismatch' },
+        { error: 'Operator mismatch - token does not match request operator_id' },
         { status: 403 }
       )
     }
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
-    // Use the PMB value - could be in mailbox_id or mailbox_pmb field
-    const pmbValue = mailbox_pmb || mailbox_id
-
-    // Insert into STAGING table (no constraints, flexible schema)
+    // Insert into STAGING table
+    // Note: mailbox_id is stored as TEXT (string), not UUID
     const { data: stagingItem, error: insertError } = await supabase
       .from('mail_item_staging')
       .insert({
+        // Tenancy scope (compound key)
         operator_id,
         location_id: location_id || null,
-        mailbox_pmb: pmbValue,                    // Store PMB string (e.g., "1614")
-        company_id: company_id || null,           // Company identifier if available
-        company_name: company_name || null,       // Company name for reference
+        mailbox_id: mailbox_id || null,       // STRING value (e.g., "1614")
+        
+        // Company reference
+        company_id: company_id || null,
+        company_name: company_name || null,
+        
+        // Scan metadata
         received_at: scanned_at || new Date().toISOString(),
-        status: 'pending_processing',             // Will be processed by post-processor
         scanned_by_email: scanned_by_email.toLowerCase(),
+        status: 'pending_processing',
+        
+        // Image storage
         envelope_image: envelope_image.replace('storage_path:', ''),
+        
+        // OCR/Matching data
         ocr_text: ocr_raw_text || null,
         ocr_confidence: ocr_confidence || 0,
-        match_confidence: body.match_confidence || ocr_confidence || 0,
-        match_method: body.match_method || (ocr_raw_text ? 'fuzzy_ocr' : 'manual'),
+        match_confidence: match_confidence || ocr_confidence || 0,
+        match_method: match_method || (ocr_raw_text ? 'fuzzy_ocr' : 'manual'),
+        
+        // Package info
         package_type: package_type || null,
         carrier: carrier || null,
         tracking_number: tracking_number || null,
+        
+        // Client tracking
         client_scan_id: client_scan_id || null,
         image_hash: image_hash || null,
-        app_version: body.app_version || '1.0.0',
-        raw_payload: body  // Store entire original payload for debugging
+        app_version: app_version || '1.0.0',
+        
+        // Debug payload
+        raw_payload: body
       })
       .select('staging_id')
       .single()
