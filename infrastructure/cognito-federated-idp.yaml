@@ -1,0 +1,469 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'c3scan Federated Identity Provider - AWS Cognito Infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: prod
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Environment name
+
+  CognitoDomainPrefix:
+    Type: String
+    Default: c3scan-prod
+    Description: Cognito custom domain prefix (must be globally unique)
+
+  GoogleClientId:
+    Type: String
+    Description: Google OAuth Client ID (for fallback auth)
+    NoEcho: true
+
+  GoogleClientSecret:
+    Type: String
+    Description: Google OAuth Client Secret
+    NoEcho: true
+
+  YardiClientId:
+    Type: String
+    Description: Yardi OIDC Client ID (placeholder - update when available)
+    Default: placeholder-yardi-client-id
+    NoEcho: true
+
+  YardiClientSecret:
+    Type: String
+    Description: Yardi OIDC Client Secret (placeholder - update when available)
+    Default: placeholder-yardi-client-secret
+    NoEcho: true
+
+  YardiIssuerUrl:
+    Type: String
+    Description: Yardi OIDC Issuer URL (e.g., https://thinkspace.yardikube.com)
+    Default: https://thinkspace.yardikube.com
+
+  CallbackUrls:
+    Type: CommaDelimitedList
+    Default: >
+      https://c3scan.thinkspace.com/auth/callback,
+      https://c3scan.25ncoworking.com/auth/callback,
+      https://c3scan.blankspaces.com/auth/callback,
+      http://localhost:3000/auth/callback
+    Description: OAuth callback URLs (comma-separated)
+
+  LogoutUrls:
+    Type: CommaDelimitedList
+    Default: >
+      https://c3scan.thinkspace.com/login,
+      https://c3scan.25ncoworking.com/login,
+      https://c3scan.blankspaces.com/login,
+      http://localhost:3000/login
+    Description: OAuth logout URLs (comma-separated)
+
+Resources:
+  # Cognito User Pool
+  C3ScanUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub 'c3scan-${Environment}-user-pool'
+      AutoVerifiedAttributes:
+        - email
+      UsernameAttributes:
+        - email
+      UsernameConfiguration:
+        CaseSensitive: false
+      
+      # Password policy (for fallback Cognito users)
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+          TemporaryPasswordValidityDays: 7
+      
+      # Account recovery
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: verified_email
+            Priority: 1
+      
+      # Custom attributes for c3scan tenancy
+      Schema:
+        # Standard attributes
+        - Name: email
+          Required: true
+          Mutable: true
+        - Name: name
+          Required: false
+          Mutable: true
+        - Name: given_name
+          Required: false
+          Mutable: true
+        - Name: family_name
+          Required: false
+          Mutable: true
+        
+        # Custom attributes for operator scoping
+        - Name: operator_id
+          AttributeDataType: String
+          Mutable: true
+          StringAttributeConstraints:
+            MinLength: 1
+            MaxLength: 100
+        - Name: company_ids
+          AttributeDataType: String
+          Mutable: true
+          StringAttributeConstraints:
+            MinLength: 1
+            MaxLength: 2048
+        - Name: role
+          AttributeDataType: String
+          Mutable: true
+          StringAttributeConstraints:
+            MinLength: 1
+            MaxLength: 50
+        - Name: auth_provider
+          AttributeDataType: String
+          Mutable: true
+          StringAttributeConstraints:
+            MinLength: 1
+            MaxLength: 50
+        - Name: location_ids
+          AttributeDataType: String
+          Mutable: true
+          StringAttributeConstraints:
+            MinLength: 1
+            MaxLength: 2048
+      
+      # Lambda triggers for custom logic
+      LambdaConfig:
+        PreSignUp: !GetAtt PreSignUpLambdaFunction.Arn
+        PostAuthentication: !GetAtt PostAuthLambdaFunction.Arn
+        CustomMessage: !GetAtt CustomMessageLambdaFunction.Arn
+      
+      EmailConfiguration:
+        EmailSendingAccount: COGNITO_DEFAULT
+      
+      MfaConfiguration: 'OFF'  # Can enable per-user if needed
+      
+      Tags:
+        - Key: Project
+          Value: c3scan
+        - Key: Environment
+          Value: !Ref Environment
+
+  # User Pool Client for Web Applications
+  C3ScanWebClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref C3ScanUserPool
+      ClientName: !Sub 'c3scan-${Environment}-web-client'
+      
+      # OAuth Configuration
+      SupportedIdentityProviders:
+        - Google
+        - COGNITO
+        # - Yardi  # Enable after Yardi is configured
+      
+      CallbackURLs: !Ref CallbackUrls
+      LogoutURLs: !Ref LogoutUrls
+      
+      AllowedOAuthFlows:
+        - code
+        - implicit
+      
+      AllowedOAuthFlowsUserPoolClient: true
+      
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - profile
+        - aws.cognito.signin.user.admin
+      
+      # Token validity
+      AccessTokenValidity: 1  # hour
+      IdTokenValidity: 1      # hour
+      RefreshTokenValidity: 30 # days
+      
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: days
+      
+      # Security
+      PreventUserExistenceErrors: ENABLED
+      
+      # Read/Write attributes
+      ReadAttributes:
+        - email
+        - email_verified
+        - name
+        - given_name
+        - family_name
+        - custom:operator_id
+        - custom:company_ids
+        - custom:role
+        - custom:auth_provider
+        - custom:location_ids
+      
+      WriteAttributes:
+        - email
+        - name
+        - given_name
+        - family_name
+
+  # User Pool Domain for Hosted UI
+  C3ScanUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Ref CognitoDomainPrefix
+      UserPoolId: !Ref C3ScanUserPool
+
+  # Google Identity Provider (Fallback)
+  GoogleIdentityProvider:
+    Type: AWS::Cognito::UserPoolIdentityProvider
+    Properties:
+      UserPoolId: !Ref C3ScanUserPool
+      ProviderName: Google
+      ProviderType: Google
+      ProviderDetails:
+        client_id: !Ref GoogleClientId
+        client_secret: !Ref GoogleClientSecret
+        authorize_scopes: 'openid email profile'
+      
+      AttributeMapping:
+        email: email
+        email_verified: email_verified
+        name: name
+        given_name: given_name
+        family_name: family_name
+        sub: custom:auth_provider_user_id
+        identities: custom:auth_provider
+
+  # Yardi Identity Provider (Primary for Thinkspace)
+  # NOTE: This is a placeholder. Enable after Yardi OIDC endpoints are confirmed.
+  YardiIdentityProvider:
+    Type: AWS::Cognito::UserPoolIdentityProvider
+    Condition: EnableYardiProvider
+    Properties:
+      UserPoolId: !Ref C3ScanUserPool
+      ProviderName: Yardi
+      ProviderType: OIDC
+      ProviderDetails:
+        client_id: !Ref YardiClientId
+        client_secret: !Ref YardiClientSecret
+        attributes_request_method: GET
+        oidc_issuer: !Ref YardiIssuerUrl
+        authorize_scopes: 'openid email profile'
+      
+      AttributeMapping:
+        email: email
+        email_verified: email_verified
+        name: name
+        given_name: given_name
+        family_name: family_name
+        sub: custom:auth_provider_user_id
+
+  Conditions:
+    EnableYardiProvider: !Not [!Equals [!Ref YardiClientId, placeholder-yardi-client-id]]
+
+  # Lambda Functions for Custom Logic
+  
+  # Pre Sign-Up: Auto-confirm users from federated IdPs
+  PreSignUpLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'c3scan-${Environment}-pre-signup'
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 10
+      MemorySize: 128
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+            // Auto-confirm users from federated IdPs
+            if (event.triggerSource === 'PreSignUp_ExternalProvider') {
+              event.response.autoConfirmUser = true;
+              event.response.autoVerifyEmail = true;
+            }
+            
+            // Set default attributes based on provider
+            const provider = event.userName.split('_')[0];
+            event.response.userAttributes = event.response.userAttributes || {};
+            event.response.userAttributes['custom:auth_provider'] = provider;
+            
+            return event;
+          };
+      Tags:
+        - Key: Project
+          Value: c3scan
+
+  # Post Authentication: Log sign-in events
+  PostAuthLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'c3scan-${Environment}-post-auth'
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 10
+      MemorySize: 128
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const cloudwatch = new AWS.CloudWatch();
+          
+          exports.handler = async (event) => {
+            console.log('Auth event:', JSON.stringify(event));
+            
+            // Log to CloudWatch for monitoring
+            const params = {
+              MetricData: [{
+                MetricName: 'UserSignIn',
+                Dimensions: [
+                  { Name: 'Provider', Value: event.userName.split('_')[0] || 'Unknown' },
+                  { Name: 'Environment', Value: process.env.ENVIRONMENT || 'unknown' }
+                ],
+                Unit: 'Count',
+                Value: 1
+              }],
+              Namespace: 'c3scan/Auth'
+            };
+            
+            try {
+              await cloudwatch.putMetricData(params).promise();
+            } catch (err) {
+              console.error('Failed to log metric:', err);
+            }
+            
+            return event;
+          };
+      Environment:
+        Variables:
+          ENVIRONMENT: !Ref Environment
+      Tags:
+        - Key: Project
+          Value: c3scan
+
+  # Custom Message: Custom email templates
+  CustomMessageLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub 'c3scan-${Environment}-custom-message'
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 10
+      MemorySize: 128
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+            // Customize messages based on trigger source
+            if (event.triggerSource === 'CustomMessage_SignUp') {
+              event.response.emailSubject = 'Welcome to c3scan - Verify your email';
+              event.response.emailMessage = `Welcome! Your verification code is: ${event.request.codeParameter}`;
+            }
+            
+            if (event.triggerSource === 'CustomMessage_ForgotPassword') {
+              event.response.emailSubject = 'c3scan - Password Reset';
+              event.response.emailMessage = `Your password reset code is: ${event.request.codeParameter}`;
+            }
+            
+            return event;
+          };
+      Tags:
+        - Key: Project
+          Value: c3scan
+
+  # Lambda Execution Role
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'c3scan-${Environment}-cognito-lambda-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: CloudWatchMetrics
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricData
+                Resource: '*'
+      Tags:
+        - Key: Project
+          Value: c3scan
+
+  # Lambda Permissions for Cognito
+  PreSignUpLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref PreSignUpLambdaFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt C3ScanUserPool.Arn
+
+  PostAuthLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref PostAuthLambdaFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt C3ScanUserPool.Arn
+
+  CustomMessageLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref CustomMessageLambdaFunction
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt C3ScanUserPool.Arn
+
+Outputs:
+  UserPoolId:
+    Description: Cognito User Pool ID
+    Value: !Ref C3ScanUserPool
+    Export:
+      Name: !Sub 'c3scan-${Environment}-user-pool-id'
+
+  UserPoolArn:
+    Description: Cognito User Pool ARN
+    Value: !GetAtt C3ScanUserPool.Arn
+    Export:
+      Name: !Sub 'c3scan-${Environment}-user-pool-arn'
+
+  WebClientId:
+    Description: Web App Client ID
+    Value: !Ref C3ScanWebClient
+    Export:
+      Name: !Sub 'c3scan-${Environment}-web-client-id'
+
+  CognitoDomain:
+    Description: Cognito Hosted UI Domain
+    Value: !Sub '${CognitoDomainPrefix}.auth.${AWS::Region}.amazoncognito.com'
+    Export:
+      Name: !Sub 'c3scan-${Environment}-cognito-domain'
+
+  CognitoAuthUrl:
+    Description: Cognito Authorization Endpoint
+    Value: !Sub 'https://${CognitoDomainPrefix}.auth.${AWS::Region}.amazoncognito.com/oauth2/authorize'
+
+  CognitoTokenUrl:
+    Description: Cognito Token Endpoint
+    Value: !Sub 'https://${CognitoDomainPrefix}.auth.${AWS::Region}.amazoncognito.com/oauth2/token'
+
+  CognitoJwksUrl:
+    Description: Cognito JWKS Endpoint
+    Value: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${C3ScanUserPool}/.well-known/jwks.json'
