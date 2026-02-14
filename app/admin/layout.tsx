@@ -17,6 +17,7 @@ import {
   Bell,
   Search,
   Command,
+  Tag,
 } from "lucide-react";
 import { useState } from "react";
 
@@ -24,6 +25,7 @@ const navItems = [
   { href: "/admin", icon: Building2, label: "Dashboard" },
   { href: "/admin/mail", icon: Mail, label: "Mail" },
   { href: "/admin/requests", icon: Inbox, label: "Requests" },
+  { href: "/admin/aliases", icon: Tag, label: "Aliases" },
   { href: "/admin/mailboxes", icon: Package, label: "Mailboxes" },
   { href: "/admin/renters", icon: Users, label: "Renters" },
   { href: "/admin/compliance", icon: FileCheck, label: "Compliance" },
