@@ -135,6 +135,7 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({
+      mail_item_id: stagingItem.staging_id,  // For backward compatibility with iOS app
       staging_id: stagingItem.staging_id,
       status: 'pending_processing',
       message: 'Mail item staged successfully - will be processed into mail_item table'
