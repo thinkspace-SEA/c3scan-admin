@@ -90,7 +90,7 @@ Resources:
           - Name: verified_email
             Priority: 1
       
-      # Custom attributes for c3scan tenancy
+      # Custom attributes for c3scan tenancy (per ACC v1.0)
       Schema:
         # Standard attributes
         - Name: email
@@ -106,37 +106,55 @@ Resources:
           Required: false
           Mutable: true
         
-        # Custom attributes for operator scoping
+        # ACC v1.0 Required Claims
+        # All users have custom:user_id (immutable)
+        - Name: user_id
+          AttributeDataType: String
+          Mutable: false  # Immutable once set
+          StringAttributeConstraints:
+            MinLength: 36
+            MaxLength: 36
+        
+        # ACC v1.0: roles (JSON array as string)
+        # Examples: '["operator_admin"]', '["platform_admin"]', '["member"]'
+        - Name: roles
+          AttributeDataType: String
+          Mutable: true
+          StringAttributeConstraints:
+            MinLength: 2
+            MaxLength: 255
+        
+        # Operator-scoped users (ACC v1.0)
+        # Null for platform_admin to prevent implicit scoping
         - Name: operator_id
           AttributeDataType: String
           Mutable: true
           StringAttributeConstraints:
-            MinLength: 1
-            MaxLength: 100
+            MinLength: 36
+            MaxLength: 36
+        
+        # Optional: location scoping for location_staff
+        # JSON array of location UUIDs
+        - Name: location_ids
+          AttributeDataType: String
+          Mutable: true
+          StringAttributeConstraints:
+            MinLength: 2
+            MaxLength: 2048
+        
+        # Additional c3scan attributes
         - Name: company_ids
           AttributeDataType: String
           Mutable: true
           StringAttributeConstraints:
-            MinLength: 1
+            MinLength: 2
             MaxLength: 2048
-        - Name: role
-          AttributeDataType: String
-          Mutable: true
-          StringAttributeConstraints:
-            MinLength: 1
-            MaxLength: 50
         - Name: auth_provider
           AttributeDataType: String
           Mutable: true
           StringAttributeConstraints:
             MinLength: 1
             MaxLength: 50
-        - Name: location_ids
-          AttributeDataType: String
-          Mutable: true
-          StringAttributeConstraints:
-            MinLength: 1
-            MaxLength: 2048
       
       # Lambda triggers for custom logic
       LambdaConfig:
@@ -196,18 +214,23 @@ Resources:
       # Security
       PreventUserExistenceErrors: ENABLED
       
-      # Read/Write attributes
+      # Read/Write attributes (per ACC v1.0)
       ReadAttributes:
+        # Standard attributes
         - email
         - email_verified
         - name
         - given_name
         - family_name
+        # ACC v1.0 Required Claims
+        - custom:user_id
+        - custom:roles
+        # ACC v1.0 Operator-scoped claims
         - custom:operator_id
-        - custom:company_ids
-        - custom:role
-        - custom:auth_provider
         - custom:location_ids
+        # Additional c3scan attributes
+        - custom:company_ids
+        - custom:auth_provider
       
       WriteAttributes:
         - email
@@ -284,6 +307,8 @@ Resources:
       MemorySize: 128
       Code:
         ZipFile: |
+          const crypto = require('crypto');
+          
           exports.handler = async (event) => {
             // Auto-confirm users from federated IdPs
             if (event.triggerSource === 'PreSignUp_ExternalProvider') {
@@ -291,10 +316,26 @@ Resources:
               event.response.autoVerifyEmail = true;
             }
             
-            // Set default attributes based on provider
-            const provider = event.userName.split('_')[0];
+            // Initialize userAttributes
             event.response.userAttributes = event.response.userAttributes || {};
+            
+            // Generate user_id (UUID v4) for all new users
+            // This matches ACC v1.0 custom:user_id requirement
+            if (!event.request.userAttributes['custom:user_id']) {
+              const uuid = crypto.randomUUID();
+              event.response.userAttributes['custom:user_id'] = uuid;
+            }
+            
+            // Set default role based on provider
+            // ACC v1.0: roles is a JSON array string
+            const provider = event.userName.split('_')[0];
             event.response.userAttributes['custom:auth_provider'] = provider;
+            
+            // Default role: member for federated users
+            // Will be updated by callback handler based on actual permissions
+            if (!event.request.userAttributes['custom:roles']) {
+              event.response.userAttributes['custom:roles'] = JSON.stringify(['member']);
+            }
             
             return event;
           };
