@@ -1,8 +1,28 @@
 # Federated Identity Provider Architecture (c3scan)
 
+## Status: IMPLEMENTED
+
+Last updated: 2026-02-14
+
 ## Overview
 
 AWS Cognito serves as the centralized identity broker, federating authentication across multiple IdPs while presenting a single, consistent authentication interface to c3scan applications.
+
+### Current Implementation Status
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Cognito User Pool | ✅ Ready | CloudFormation template created |
+| Google OAuth | ✅ Ready | Fallback IdP configured |
+| Yardi OIDC | ⏳ Pending | Waiting for endpoints from Yardi |
+| Detect Provider API | ✅ Implemented | `/api/auth/detect-provider` |
+| Callback Handler | ✅ Implemented | `/api/auth/callback` with ACC v1.0 |
+| Emergency Auth | ✅ Implemented | Break-glass for OAuth failures |
+| Maintenance Mode | ✅ Implemented | Customer site toggle |
+| Admin APIs | ✅ Implemented | Full CRUD for mail/requests/mailboxes |
+| ACC v1.0 Compliance | ✅ Implemented | Operator context, JWT claims, audit logging |
+
+## Architecture Diagram
 
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
@@ -26,340 +46,298 @@ AWS Cognito serves as the centralized identity broker, federating authentication
                   │  • MFA, password policies  │
                   └─────────────┬──────────────┘
                                 │
-                                │ Cognito-hosted UI
-                                │ or API integration
-                                │
-                                ▼
-                  ┌────────────────────────────┐
-                  │      c3scan Apps           │
-                  │                            │
-                  │  • Customer Portal (/app)  │
-                  │  • Admin Portal (/admin)   │
-                  │  • Mobile API              │
-                  │  • Consistent JWT claims   │
-                  └────────────────────────────┘
+           ┌────────────────────┼────────────────────┐
+           │                    │                    │
+           ▼                    ▼                    ▼
+┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
+│  Customer Portal │  │  Admin Portal    │  │  Emergency Auth  │
+│  (/app)          │  │  (/admin)        │  │  (/admin/emer-  │
+│                  │  │                  │  │   gency-login)   │
+│  OAuth via       │  │  OAuth via       │  │                  │
+│  Cognito         │  │  Cognito         │  │  Direct DB auth  │
+│                  │  │                  │  │  (break-glass)   │
+└──────────────────┘  └──────────────────┘  └──────────────────┘
 ```
 
-## Authentication Flow
+## Admin Console Features
 
-### 1. User Initiates Login
-```
-User → c3scan Login Page → Detect Provider API
-```
+### Authentication Layer
+- **Federated IdP**: Cognito with Yardi/Google
+- **Emergency Access**: `/admin/emergency-login` for OAuth failures
+- **Role-based Access**: operator_admin, operator_staff, location_staff
+- **ACC v1.0 Compliance**: Full operator context resolution
 
-### 2. Provider Detection
-```
-GET /auth/detect-provider?email=user@thinkspace.com
+### Maintenance Mode
+- **Location**: Settings → Maintenance
+- **Function**: Toggle customer site on/off
+- **Preserves**: Admin access during maintenance
+- **Customer sees**: Friendly maintenance page with custom message
 
-Response:
-{
-  "operator_id": "thinkspace",
-  "operator_slug": "thinkspace",
-  "branding": { ... },
-  "auth_provider": "cognito",           // Always Cognito
-  "cognito_config": {
-    "user_pool_domain": "c3scan-prod.auth.us-west-2.amazoncognito.com",
-    "client_id": "<cognito_app_client_id>",
-    "identity_providers": ["Yardi", "Google"],  // Available IdPs
-    "redirect_uri": "https://c3scan.thinkspace.com/auth/callback"
-  }
-}
+### API Endpoints Implemented
+
+#### Authentication
+```
+GET  /api/auth/detect-provider       # Returns Cognito config
+GET  /api/auth/callback              # OAuth callback handler
+POST /api/auth/emergency-login       # Break-glass auth
+POST /api/admin/maintenance-mode     # Toggle maintenance
 ```
 
-### 3. Redirect to Cognito Hosted UI
+#### Admin APIs (Full CRUD)
 ```
-c3scan redirects to:
-https://c3scan-prod.auth.us-west-2.amazoncognito.com/oauth2/authorize?
-  client_id=<client_id>&
-  response_type=code&
-  scope=openid+email+profile&
-  redirect_uri=https://c3scan.thinkspace.com/auth/callback&
-  identity_provider=Yardi&          // Pre-select Yardi
-  state=<csrf_token>
-```
+# Mail Items
+POST /api/admin/mail-items           # Create intake record
+GET  /api/admin/mail-items           # List with filters
+GET  /api/admin/mail-items/{id}      # Get detail
+GET  /api/admin/mail-items/staging   # View staging data
 
-### 4. Cognito → Yardi Federation
-```
-User → Cognito Hosted UI → Yardi OIDC Login
-                              ↓
-                    Yardi Authenticates User
-                              ↓
-                    Yardi returns tokens to Cognito
-                              ↓
-                    Cognito creates/updates user record
-                              ↓
-                    Cognito issues Cognito tokens
-```
+# Requests
+GET  /api/admin/requests             # List requests
+POST /api/admin/requests/{id}/status # Update status
 
-### 5. Callback to c3scan
-```
-Cognito redirects to:
-https://c3scan.thinkspace.com/auth/callback?
-  code=<authorization_code>&
-  state=<csrf_token>
+# Mailboxes
+GET  /api/admin/mailboxes            # List mailboxes
+POST /api/admin/mailboxes            # Create mailbox
+
+# Companies
+GET  /api/admin/companies            # Search companies
+GET  /api/admin/companies/{id}       # Detail with aliases
+
+# Company Aliases
+PATCH /api/admin/company-aliases/{id} # Edit/archive alias
+
+# Alias Suggestions
+GET  /api/admin/alias-suggestions              # List pending
+POST /api/admin/alias-suggestions/{id}/decision # Approve/reject
 ```
 
-### 6. Token Exchange
-```
-c3scan backend:
-POST https://c3scan-prod.auth.us-west-2.amazoncognito.com/oauth2/token
-  grant_type=authorization_code
-  client_id=<client_id>
-  code=<authorization_code>
-  redirect_uri=https://c3scan.thinkspace.com/auth/callback
+## ACC v1.0 (Admin Context Contract) Implementation
 
-Response:
-{
-  "access_token": "<cognito_jwt>",
-  "id_token": "<cognito_id_jwt>",
-  "refresh_token": "<refresh_token>",
-  "expires_in": 3600
-}
-```
-
-### 7. Session Creation
-```
-c3scan validates Cognito JWT signature (JWKS)
-  ↓
-Extract claims: sub, email, name, identities[]
-  ↓
-Lookup user in c3scan database
-  ↓
-Create session with operator scoping
-  ↓
-Redirect to /app or /admin
-```
-
-## Cognito User Pool Configuration
-
-### User Pool Settings
-- **Name**: c3scan-prod-user-pool
-- **Region**: us-west-2 (match your infrastructure)
-- **Email**: Required attribute
-- **Email verification**: Optional (handled by IdP)
-- **MFA**: Optional (can enforce per IdP)
-- **Password policy**: Standard (for fallback users)
-
-### Federated Identity Providers
-
-#### Yardi (Primary for Thinkspace)
-```
-Provider Type: OIDC
-Provider Name: Yardi
-Client ID: <from_yardi_admin>
-Client Secret: <from_yardi_admin>
-Authorize Scope: openid email profile
-Authorize Endpoint: https://thinkspace.yardikube.com/oauth/authorize
-Token Endpoint: https://thinkspace.yardikube.com/oauth/token
-User Info Endpoint: https://thinkspace.yardikube.com/oauth/userinfo
-JWKS Endpoint: https://thinkspace.yardikube.com/.well-known/jwks.json
-
-Attribute Mapping:
-  Yardi claim    → Cognito attribute
-  ─────────────────────────────────────
-  email          → Email
-  email_verified → Email Verified
-  name           → Name
-  given_name     → Given Name
-  family_name    → Family Name
-  sub            → Custom: yardi_user_id
-```
-
-#### Google (Fallback)
-```
-Provider Type: Google
-Client ID: <google_oauth_client_id>
-Client Secret: <google_oauth_secret>
-Authorize Scope: openid email profile
-
-Attribute Mapping:
-  Google claim   → Cognito attribute
-  ─────────────────────────────────────
-  email          → Email
-  email_verified → Email Verified
-  name           → Name
-  given_name     → Given Name
-  family_name    → Family Name
-  sub            → Custom: google_user_id
-```
-
-### App Client Configuration
-```
-App Client Name: c3scan-web-client
-Generate Secret: No (for SPA/Next.js)
-Authentication Flows:
-  ✓ ALLOW_USER_SRP_AUTH
-  ✓ ALLOW_REFRESH_TOKEN_AUTH
-  ✓ ALLOW_USER_PASSWORD_AUTH (for fallback)
-
-OAuth 2.0 Settings:
-  Allowed OAuth Flows:
-    ✓ Authorization code grant
-    ✓ Implicit grant (optional)
-  
-  Allowed OAuth Scopes:
-    ✓ openid
-    ✓ email
-    ✓ profile
-  
-  Callback URLs:
-    - https://c3scan.thinkspace.com/auth/callback
-    - https://c3scan.25ncoworking.com/auth/callback
-    - https://c3scan.blankspaces.com/auth/callback
-    - http://localhost:3000/auth/callback (dev)
-  
-  Sign-out URLs:
-    - https://c3scan.thinkspace.com/login
-    - https://c3scan.25ncoworking.com/login
-    - https://c3scan.blankspaces.com/login
-    - http://localhost:3000/login (dev)
-
-Identity Providers:
-  ✓ Yardi (for thinkspace.com domain)
-  ✓ Google (fallback)
-  ✓ Cognito User Pool (fallback)
-```
-
-### Domain Configuration
-```
-Domain prefix: c3scan-prod
-Full domain: c3scan-prod.auth.us-west-2.amazoncognito.com
-```
-
-## JWT Token Structure
-
-### Cognito ID Token Claims
+### JWT Claims Structure
 ```json
 {
-  "sub": "uuid-user-id-in-cognito",
-  "aud": "<cognito_app_client_id>",
-  "email": "user@thinkspace.com",
-  "email_verified": true,
-  "name": "John Doe",
-  "given_name": "John",
-  "family_name": "Doe",
-  "identities": [
-    {
-      "userId": "user-id-from-yardi",
-      "providerName": "Yardi",
-      "providerType": "OIDC",
-      "issuer": "https://thinkspace.yardikube.com"
-    }
-  ],
+  "sub": "cognito-user-uuid",
+  "custom:user_id": "c3scan-user-uuid",
+  "custom:roles": ["operator_admin", "operator_staff"],
   "custom:operator_id": "thinkspace",
-  "custom:company_ids": "["company-1","company-2"]",
-  "custom:role": "member_user",
-  "custom:auth_provider": "Yardi",
+  "custom:location_ids": ["loc-1", "loc-2"],
+  "custom:all_locations": false,
+  "email": "admin@thinkspace.com",
   "iat": 1739520000,
   "exp": 1739523600
 }
 ```
 
-### Custom Attributes (c3scan-specific)
-These are added to Cognito user records and included in tokens:
+### Operator Context Resolution
+1. **Token has operator_id** → Use it (reject X-Operator-Id header)
+2. **Platform admin token** → Require X-Operator-Id header
+3. **No context** → Reject with `OPERATOR_CONTEXT_REQUIRED`
 
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `custom:operator_id` | String | Operator tenant ID |
-| `custom:company_ids` | String | JSON array of company IDs |
-| `custom:role` | String | User role (member_user, operator_staff, etc) |
-| `custom:auth_provider` | String | Original IdP (Yardi, Google, etc) |
-| `custom:location_ids` | String | For staff: accessible locations |
+### Error Codes Implemented
+- `OPERATOR_CONTEXT_REQUIRED` - No operator context in token
+- `OPERATOR_CONTEXT_CONFLICT` - Token context conflicts with header
+- `OPERATOR_NOT_FOUND` - Operator doesn't exist
+- `LOCATION_FORBIDDEN` - User lacks location access
+- `RESOURCE_NOT_FOUND` - Object not found or wrong operator
 
-## API Endpoints
+### Audit Logging
+All mutations logged to `audit_logs` table:
+- Actor user ID and roles
+- Effective operator ID
+- Endpoint and method
+- Resource type and ID
+- Previous/new state (for updates)
+- Success/failure result
 
-### GET /auth/detect-provider
-Returns Cognito configuration based on operator.
+## Database Schema (Auth-Related)
 
-### GET /auth/callback
-Handles Cognito OAuth callback, exchanges code for tokens.
-
-### POST /auth/refresh
-Refreshes access token using refresh token.
-
-### POST /auth/logout
-Revokes tokens and clears session.
-
-## Database Schema Updates
-
-### Existing: user_accounts table
+### user_account
 ```sql
--- Add fields for Cognito integration
-ALTER TABLE user_accounts ADD COLUMN cognito_sub UUID;
-ALTER TABLE user_accounts ADD COLUMN auth_provider VARCHAR(50);
-ALTER TABLE user_accounts ADD COLUMN idp_user_id VARCHAR(255);
-ALTER TABLE user_accounts ADD COLUMN last_idp_login TIMESTAMPTZ;
-
--- Unique constraint on cognito_sub within operator
-CREATE UNIQUE INDEX idx_user_cognito_sub 
-  ON user_accounts(cognito_sub, operator_id) 
-  WHERE cognito_sub IS NOT NULL;
+ALTER TABLE user_account ADD COLUMN cognito_sub UUID UNIQUE;
+ALTER TABLE user_account ADD COLUMN auth_provider VARCHAR(50);
+ALTER TABLE user_account ADD COLUMN roles JSONB DEFAULT '[]';
+ALTER TABLE user_account ADD COLUMN location_ids UUID[] DEFAULT '{}';
+ALTER TABLE user_account ADD COLUMN is_emergency_admin BOOLEAN DEFAULT false;
+ALTER TABLE user_account ADD COLUMN emergency_password_hash TEXT;
+ALTER TABLE user_account ADD COLUMN emergency_mfa_secret TEXT;
 ```
 
-### New: user_identities table
+### user_identities
 ```sql
--- Track multiple identities per user (if needed)
 CREATE TABLE user_identities (
   identity_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID REFERENCES user_accounts(user_id),
-  provider_type VARCHAR(50),      -- 'yardi', 'google', 'cognito'
-  provider_user_id VARCHAR(255),  -- User ID from IdP
+  user_id UUID REFERENCES user_account(user_id),
+  provider_type VARCHAR(50),
+  provider_user_id VARCHAR(255),
   provider_email VARCHAR(255),
-  provider_data JSONB,            -- Raw claims from IdP
+  provider_data JSONB,
   is_primary BOOLEAN DEFAULT false,
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  last_used_at TIMESTAMPTZ,
-  UNIQUE(user_id, provider_type),
-  UNIQUE(provider_type, provider_user_id, operator_id)
+  last_used_at TIMESTAMPTZ
 );
 ```
 
-## Implementation Phases
+### audit_logs
+```sql
+CREATE TABLE audit_logs (
+  log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  timestamp TIMESTAMPTZ NOT NULL,
+  actor_user_id UUID,
+  actor_roles JSONB,
+  effective_operator_id UUID,
+  endpoint TEXT,
+  method TEXT,
+  event_type TEXT,
+  resource_type TEXT,
+  resource_id TEXT,
+  result TEXT,
+  previous_state JSONB,
+  new_state JSONB,
+  metadata JSONB
+);
+```
 
-### Phase 1: Cognito Foundation
-1. Create Cognito User Pool
-2. Configure app client with OAuth settings
-3. Set up Cognito domain
-4. Configure Google as federated IdP (fallback)
-5. Implement `/auth/detect-provider` endpoint
-6. Implement `/auth/callback` endpoint
-7. Update login UI with Cognito-hosted UI redirect
+### system_settings (Maintenance Mode)
+```sql
+CREATE TABLE system_settings (
+  setting_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  operator_id UUID REFERENCES operator(operator_id),
+  setting_key VARCHAR(100) NOT NULL,
+  setting_value JSONB NOT NULL DEFAULT '{}',
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_by UUID REFERENCES user_account(user_id),
+  UNIQUE(operator_id, setting_key)
+);
 
-### Phase 2: Yardi Integration
-1. Get Yardi OIDC endpoints from admin
-2. Add Yardi as federated IdP in Cognito
-3. Configure attribute mapping
-4. Test end-to-end Yardi → Cognito → c3scan flow
-5. Update detect-provider to suggest Yardi for thinkspace.com emails
+-- Maintenance mode setting
+INSERT INTO system_settings (setting_key, setting_value)
+VALUES ('maintenance_mode', '{"is_enabled": false, "message": "..."}');
+```
 
-### Phase 3: Multi-Operator Support
-1. Add operator-specific IdP configurations
-2. Implement domain-to-operator mapping
-3. Add 25N, Blankspaces IdPs
-4. Test cross-operator isolation
+### emergency_access_logs
+```sql
+CREATE TABLE emergency_access_logs (
+  log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES user_account(user_id),
+  accessed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ip_address INET,
+  user_agent TEXT,
+  success BOOLEAN,
+  failure_reason TEXT,
+  reason_provided TEXT,
+  actions_taken JSONB
+);
+```
+
+## Emergency Authentication
+
+### Use Case
+When OAuth/Cognito/DNS is down, admins can still access the system.
+
+### Endpoint
+```
+POST /api/auth/emergency-login
+Body: {
+  "email": "emergency@thinkspace.com",
+  "password": "...",
+  "totpCode": "123456",
+  "reason": "Google OAuth is down"
+}
+```
+
+### Security Features
+- Rate limited: 3 attempts/hour per IP
+- MFA required: Password + TOTP
+- Short session: 30 minutes
+- Full audit trail
+- Alerts security team
+- Read-only by default
+
+### Setup
+1. Create emergency admin user in database
+2. Set up TOTP in authenticator app
+3. Store credentials in 1Password
+4. Use `/admin/emergency-login` when needed
+
+## Maintenance Mode
+
+### Customer Impact
+- Customer site shows maintenance page
+- Admin site remains accessible
+- Custom message configurable
+
+### Admin Control
+- Settings → Maintenance
+- Toggle on/off
+- Edit custom message
+- Preview customer view
+
+### Implementation
+- Middleware checks `system_settings.maintenance_mode`
+- Admin routes bypass maintenance check
+- 30-second cache to reduce DB load
+- Fail-open (site stays up if DB fails)
+
+## Implementation Files
+
+### Infrastructure
+- `infrastructure/cognito-federated-idp.yaml` - CloudFormation template
+- `infrastructure/DEPLOYMENT.md` - Deployment instructions
+
+### API Routes
+- `app/api/auth/detect-provider/route.ts`
+- `app/api/auth/callback/route.ts`
+- `app/api/auth/emergency-login/route.ts`
+- `app/api/admin/maintenance-mode/route.ts`
+- `app/api/admin/mail-items/route.ts`
+- `app/api/admin/requests/route.ts`
+- `app/api/admin/companies/route.ts`
+- `app/api/admin/company-aliases/[id]/route.ts`
+- `app/api/admin/alias-suggestions/route.ts`
+
+### Middleware
+- `middleware.ts` - Operator context + maintenance mode
+
+### Admin UI
+- `app/admin/emergency-login/page.tsx`
+- `app/admin/settings/maintenance/page.tsx`
+- `app/maintenance/page.tsx` - Customer maintenance page
+
+### Database Migrations
+- `supabase/migrations/20250214170000_update_auth_tables_acc_v1.sql`
+- `supabase/migrations/20250214160000_create_audit_logs.sql`
+- `supabase/migrations/20250214200000_emergency_access.sql`
+- `supabase/migrations/20250214210000_system_settings.sql`
 
 ## Security Considerations
 
 ### Token Validation
 ```typescript
-// c3scan must validate:
-1. JWT signature (via Cognito JWKS endpoint)
+// c3scan validates:
+1. JWT signature (via Cognito JWKS)
 2. Token expiration (exp claim)
-3. Audience (aud matches app client ID)
-4. Issuer (iss matches Cognito user pool)
+3. Audience (aud matches client ID)
+4. Issuer (iss matches user pool)
 5. Custom claims (operator_id matches hostname)
 ```
 
 ### CSRF Protection
-- State parameter required in OAuth flow
+- State parameter in OAuth flow
 - State stored in httpOnly cookie
 - Validated on callback
 
 ### Session Management
-- Access token: 1 hour (Cognito default)
-- Refresh token: 30 days (configurable)
-- Refresh tokens rotated on use
-- Logout revokes tokens via Cognito global sign-out
+- Access token: 1 hour
+- Refresh token: 30 days
+- Emergency session: 30 minutes
+- Logout revokes via Cognito global sign-out
+
+### Break-Glass Access
+- Emergency credentials stored securely
+- TOTP required
+- All access logged
+- Alerts sent on use
+- Regular credential rotation
 
 ## Environment Variables
 
@@ -368,44 +346,42 @@ CREATE TABLE user_identities (
 AWS_REGION=us-west-2
 COGNITO_USER_POOL_ID=us-west-2_xxxxxxxxx
 COGNITO_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxx
-COGNITO_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  # If using confidential client
 COGNITO_DOMAIN=c3scan-prod.auth.us-west-2.amazoncognito.com
 
-# IdP Configurations (stored in DB or env)
-YARDI_OIDC_CLIENT_ID=c3scan-thinkspace
-YARDI_OIDC_CLIENT_SECRET=xxxxxxxxxx
-YARDI_OIDC_ISSUER=https://thinkspace.yardikube.com
-GOOGLE_OIDC_CLIENT_ID=xxxxxxxxxx.apps.googleusercontent.com
-GOOGLE_OIDC_CLIENT_SECRET=xxxxxxxxxx
+# Supabase
+NEXT_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=xxxxx
+
+# Emergency Auth (set up after migration)
+# Stored in database, not environment
 ```
 
-## Testing Strategy
+## Deployment Status
 
-### Unit Tests
-- Token validation logic
-- Provider detection logic
-- Attribute mapping
+### Ready to Deploy
+- CloudFormation template for Cognito
+- Admin APIs and UI
+- Emergency authentication
+- Maintenance mode
+- ACC v1.0 compliance
 
-### Integration Tests
-- Cognito token exchange
-- Yardi → Cognito federation
-- Google → Cognito federation
+### Blocked
+- **Yardi OIDC**: Waiting for endpoints from Yardi
+- **Apple iOS Auth**: Waiting for Apple Developer enrollment
 
-### E2E Tests
-- Full login flow with each IdP
-- Token refresh
-- Logout and session cleanup
-- Cross-operator access denial
-
-## Rollback Plan
-
-If issues arise:
-1. Disable Yardi IdP in Cognito (revert to Google only)
-2. Or bypass Cognito entirely and use Supabase Auth directly
-3. Feature flag for gradual rollout per operator
+### Next Steps
+1. Obtain Google OAuth credentials
+2. Deploy Cognito CloudFormation stack
+3. Configure Google as fallback IdP
+4. Test emergency authentication
+5. Get Yardi OIDC endpoints
+6. Add Yardi as federated IdP
+7. Complete Apple enrollment for iOS auth
 
 ## Documentation
 
 - [Cognito OIDC Federation Guide](https://docs.aws.amazon.com/cognito/latest/developerguide/cognito-user-pools-oidc-idp.html)
-- [Cognito Token Endpoint](https://docs.aws.amazon.com/cognito/latest/developerguide/token-endpoint.html)
-- [Yardi Kube API Integration](./yardi-kube-api-reference.md)
+- [ACC v1.0 Specification](./webapi-contract-v1.md)
+- [Emergency Access Architecture](./emergency-access.md)
+- [Database Auth Schema Review](./database-auth-schema-review.md)
+- [iOS Google OAuth Handoff](./ios-google-oauth-handoff.md)
