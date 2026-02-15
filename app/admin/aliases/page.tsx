@@ -282,7 +282,10 @@ export default function AliasSuggestionsPage() {
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-600">
                     {s.company_name ? (
-                      <span className="text-gray-900">{s.company_name}</span>
+                      <div>
+                        <span className="text-gray-900">{s.company_name}</span>
+                        <span className="text-xs text-blue-600 block">Staff selected</span>
+                      </div>
                     ) : (
                       <span className="text-gray-400 italic">Not matched</span>
                     )}
@@ -314,9 +317,10 @@ export default function AliasSuggestionsPage() {
                         <button
                           onClick={() => openDecisionModal(s, 'approve')}
                           className="px-3 py-1.5 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 transition-colors flex items-center gap-1"
+                          title={s.company_id ? `Current: ${s.company_name}` : 'Select company to assign'}
                         >
                           <CheckCircle size={14} />
-                          Approve
+                          {s.company_id ? 'Review & Approve' : 'Assign & Approve'}
                         </button>
                         <button
                           onClick={() => openDecisionModal(s, 'reject')}
@@ -352,9 +356,21 @@ export default function AliasSuggestionsPage() {
             
             {decisionAction === 'approve' ? (
               <div className="space-y-4">
+                {/* Show originally selected company if different */}
+                {selectedSuggestion?.company_id && selectedSuggestion?.company_name && (
+                  <div className="bg-blue-50 p-3 rounded-lg">
+                    <p className="text-sm text-blue-700">
+                      <span className="font-medium">Originally selected:</span> {selectedSuggestion.company_name}
+                    </p>
+                    <p className="text-xs text-blue-600 mt-1">
+                      You can keep this or select a different company below.
+                    </p>
+                  </div>
+                )}
+                
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Link to Company *
+                    Assign to Company *
                   </label>
                   <select
                     value={selectedCompanyId}
@@ -369,8 +385,22 @@ export default function AliasSuggestionsPage() {
                     ))}
                   </select>
                 </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Notes (optional)
+                  </label>
+                  <textarea
+                    value={rejectReason}
+                    onChange={(e) => setRejectReason(e.target.value)}
+                    placeholder="e.g., Staff selected wrong company, corrected to..."
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#FFCC00] h-20 resize-none"
+                  />
+                </div>
+                
                 <p className="text-sm text-gray-500">
-                  This will create a new OCR variant alias for the selected company.
+                  This will create a new OCR variant alias for the selected company. 
+                  Future scans matching &quot;{selectedSuggestion?.suggested_alias}&quot; will automatically route to this company.
                 </p>
               </div>
             ) : (
